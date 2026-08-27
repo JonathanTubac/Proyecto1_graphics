@@ -313,7 +313,7 @@ fn main() {
         player.fov
     );
     println!(
-        "W/S: avanzar | A/D o mouse: girar | M: mapa completo | N: minimapa | TAB: soltar el mouse | F1: guardar maze.png"
+        "W/S: avanzar | A/D: strafe | mouse: girar | M: mapa completo | N: minimapa | TAB: soltar el mouse | F1: guardar maze.png"
     );
 
     while !window.window_should_close() {
