@@ -4,6 +4,7 @@ mod enemy;
 mod framebuffer;
 mod lighting;
 mod maze;
+mod menu;
 mod player;
 mod sprites;
 mod textures;
@@ -468,42 +469,134 @@ fn render(
     }
 }
 
+/// Archivo y nombre para mostrar de cada nivel jugable. El más grande de
+/// los tres decide el tamaño de ventana: la ventana es fija durante toda la
+/// sesión (menú y niveles comparten framebuffer), así que tiene que ser lo
+/// bastante grande para el nivel más grande; los más chicos simplemente
+/// dejan margen sin usar alrededor.
+const LEVEL_FILES: [(&str, &str); 3] = [
+    ("maze1.txt", "Nivel 1"),
+    ("maze2.txt", "Nivel 2"),
+    ("maze3.txt", "Nivel 3"),
+];
+
+/// Qué pasó al salir de un nivel: si hay que cerrar la aplicación entera, o
+/// sólo volver al menú principal para elegir otra vez.
+#[derive(PartialEq)]
+enum LevelResult {
+    BackToMenu,
+    WindowClosed,
+}
+
 fn main() {
-    let maze = load_maze("maze.txt");
+    let mazes: Vec<Maze> = LEVEL_FILES.iter().map(|(path, _)| load_maze(path)).collect();
+    let level_names: Vec<&str> = LEVEL_FILES.iter().map(|(_, name)| *name).collect();
 
-    let width = (maze.width() * BLOCK_SIZE) as i32;
-    let height = (maze.height() * BLOCK_SIZE) as i32;
-
-    let (start_x, start_y) = maze
-        .player_start()
-        .expect("El laberinto no tiene una 'p' para el jugador");
-    let mut player = Player::at_cell(start_x, start_y, BLOCK_SIZE, PI / 3.0, PI / 3.0);
+    let width = (mazes.iter().map(|m| m.width()).max().unwrap_or(1) * BLOCK_SIZE) as i32;
+    let height = (mazes.iter().map(|m| m.height()).max().unwrap_or(1) * BLOCK_SIZE) as i32;
 
     let (mut window, thread) = raylib::init()
         .size(width, height)
         .title("Laberinto")
         .build();
     window.set_target_fps(60);
-    // Oculta y centra el cursor en cada frame: así get_mouse_delta() da
-    // movimiento relativo continuo en vez de toparse con el borde de la
-    // ventana, que es lo que se necesita para girar la cámara con el mouse.
-    window.disable_cursor();
+    // Manejamos ESC nosotros mismos en vez de dejar que raylib cierre la
+    // ventana de una: en los submenús sirve para "atrás", no para salir.
+    window.set_exit_key(None);
 
     let audio_device =
         RaylibAudio::init_audio_device().expect("No se pudo inicializar el dispositivo de audio");
     let sfx = Sfx::load(&audio_device);
-    sfx.start_calm_ambient();
 
     let mut framebuffer = Framebuffer::new(&mut window, &thread, width, height);
     framebuffer.set_background_color(Color::new(10, 9, 13, 255));
     let textures = TextureManager::new(&mut window, &thread);
+
+    loop {
+        window.enable_cursor(); // el menú se navega con teclado; no lo queremos atrapado.
+        let Some(level_index) = run_menu(&mut window, &thread, &sfx, width, height, &level_names)
+        else {
+            return; // se cerró la ventana desde el menú
+        };
+
+        window.disable_cursor();
+        let result = run_level(
+            &mut window,
+            &thread,
+            &mut framebuffer,
+            &textures,
+            &sfx,
+            &mazes[level_index],
+            width,
+            height,
+        );
+        if result == LevelResult::WindowClosed {
+            return;
+        }
+        // LevelResult::BackToMenu: el loop de arriba vuelve a mostrar el menú.
+    }
+}
+
+/// Corre el menú hasta que el jugador elige un nivel (regresa su índice), o
+/// hasta que se cierra la ventana o se elige salir (`None`).
+fn run_menu(
+    window: &mut RaylibHandle,
+    thread: &RaylibThread,
+    sfx: &Sfx,
+    width: i32,
+    height: i32,
+    level_names: &[&str],
+) -> Option<usize> {
+    let mut nav = menu::Menu::new();
+    sfx.stop_gameplay_ambient();
+    sfx.start_menu_theme();
+
+    let result = loop {
+        if window.window_should_close() {
+            break None;
+        }
+        sfx.update_streams();
+
+        match nav.update(window, sfx, level_names.len()) {
+            menu::Outcome::Quit => break None,
+            menu::Outcome::StartGame(level) => break Some(level),
+            menu::Outcome::None => {}
+        }
+
+        let mut d = window.begin_drawing(thread);
+        menu::draw(&mut d, width, height, &nav, level_names);
+    };
+
+    sfx.stop_menu_theme();
+    result
+}
+
+/// Corre una partida completa en `maze`, desde que arranca hasta que el
+/// jugador vuelve al menú (tras ganar o perder) o cierra la ventana.
+fn run_level(
+    window: &mut RaylibHandle,
+    thread: &RaylibThread,
+    framebuffer: &mut Framebuffer,
+    textures: &TextureManager,
+    sfx: &Sfx,
+    maze: &Maze,
+    width: i32,
+    height: i32,
+) -> LevelResult {
+    let (start_x, start_y) = maze
+        .player_start()
+        .expect("El laberinto no tiene una 'p' para el jugador");
+    let mut player = Player::at_cell(start_x, start_y, BLOCK_SIZE, PI / 3.0, PI / 3.0);
+
+    sfx.start_calm_ambient();
+
     // Ningún enemigo hasta que se rompa el primer tótem: el laberinto sólo
     // trae un marcador 'e' (uno por nivel), y se planta apenas se necesite.
     let mut enemies: Vec<enemy::Enemy> = Vec::new();
     // La puerta de salida es un sprite fijo, no un Enemy: no persigue ni ve,
     // sólo se planta sobre la celda de meta para poder verla en 3D.
-    let door_sprites = sprites::spawn_from_maze(&maze, BLOCK_SIZE, 'g', 'g');
-    let mut totems = totem::spawn_from_maze(&maze, BLOCK_SIZE, 't');
+    let door_sprites = sprites::spawn_from_maze(maze, BLOCK_SIZE, 'g', 'g');
+    let mut totems = totem::spawn_from_maze(maze, BLOCK_SIZE, 't');
     let mut mode = Mode::World3D;
     let mut show_minimap = true;
     let mut game_state = GameState::Playing;
@@ -519,7 +612,12 @@ fn main() {
         "W/S: avanzar | A/D: strafe | SHIFT: correr | mouse: girar | E: destruir totem cercano | M: mapa completo | N: minimapa | TAB: soltar el mouse | F1: guardar maze.png"
     );
 
-    while !window.window_should_close() {
+    loop {
+        if window.window_should_close() {
+            sfx.stop_gameplay_ambient();
+            return LevelResult::WindowClosed;
+        }
+
         // Sólo importan mientras se sigue jugando; se usan más abajo para
         // decidir qué pistas dibujar en el HUD.
         let mut near_totem = false;
@@ -630,7 +728,7 @@ fn main() {
         world_sprites.extend_from_slice(&totem_sprites);
 
         render(
-            &mut framebuffer,
+            framebuffer,
             &maze,
             &player,
             mode,
@@ -671,7 +769,7 @@ fn main() {
                     height,
                     "GANASTE!",
                     Color::new(255, 220, 60, 255),
-                    "Llegaste a la puerta de salida. ESC para salir.",
+                    "Llegaste a la puerta de salida. ESC para volver al menu.",
                 ),
                 GameState::Lost => draw_end_screen(
                     &mut d,
@@ -679,11 +777,15 @@ fn main() {
                     height,
                     "PERDISTE!",
                     Color::new(220, 60, 60, 255),
-                    "Un enemigo te alcanzo. ESC para salir.",
+                    "Un enemigo te alcanzo. ESC para volver al menu.",
                 ),
                 GameState::Playing => {}
             }
         }
 
+        if game_state != GameState::Playing && window.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+            sfx.stop_gameplay_ambient();
+            return LevelResult::BackToMenu;
+        }
     }
 }

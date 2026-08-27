@@ -21,6 +21,9 @@ pub struct Sfx<'aud> {
     pub ambient_calm: Option<Music<'aud>>,
     /// Ambiente desde que despierta el enemigo hasta el final de la partida.
     pub ambient_tense: Option<Music<'aud>>,
+    pub menu_move: Option<Sound<'aud>>,
+    pub menu_select: Option<Sound<'aud>>,
+    pub menu_theme: Option<Music<'aud>>,
 }
 
 impl<'aud> Sfx<'aud> {
@@ -34,6 +37,9 @@ impl<'aud> Sfx<'aud> {
             last_totem_destroyed: load_sound(device, "assets/last_totem_destroyed.mp3"),
             ambient_calm: load_music(device, "assets/ambient_1.mp3"),
             ambient_tense: load_music(device, "assets/ambient_2.mp3"),
+            menu_move: load_sound(device, "assets/menu_move.mp3"),
+            menu_select: load_sound(device, "assets/menu_select.mp3"),
+            menu_theme: load_music(device, "assets/menu_theme.mp3"),
         }
     }
 
@@ -73,6 +79,31 @@ impl<'aud> Sfx<'aud> {
         play_music(&self.ambient_calm);
     }
 
+    /// Corta cualquiera de los dos ambientes de partida que esté sonando.
+    /// Se llama al salir de un nivel (se gane, se pierda, o se vuelva al
+    /// menú), para no dejarlo sonando de fondo mientras suena la música del
+    /// menú.
+    pub fn stop_gameplay_ambient(&self) {
+        stop_music(&self.ambient_calm);
+        stop_music(&self.ambient_tense);
+    }
+
+    pub fn play_menu_move(&self) {
+        play(&self.menu_move);
+    }
+
+    pub fn play_menu_select(&self) {
+        play(&self.menu_select);
+    }
+
+    pub fn start_menu_theme(&self) {
+        play_music(&self.menu_theme);
+    }
+
+    pub fn stop_menu_theme(&self) {
+        stop_music(&self.menu_theme);
+    }
+
     /// Hay que llamarlo una vez por frame para que el streaming de música no
     /// se corte a media canción: `Music` sólo lee del archivo hacia
     /// adelante bajo demanda, no precarga todo a RAM como `Sound`.
@@ -81,6 +112,9 @@ impl<'aud> Sfx<'aud> {
             m.update_stream();
         }
         if let Some(m) = &self.ambient_tense {
+            m.update_stream();
+        }
+        if let Some(m) = &self.menu_theme {
             m.update_stream();
         }
     }
