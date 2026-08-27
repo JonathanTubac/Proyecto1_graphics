@@ -33,11 +33,13 @@ enum Mode {
     World3D,
 }
 
-/// Si la partida sigue en curso o ya se llegó a la puerta de salida.
+/// Si la partida sigue en curso, ya se llegó a la puerta de salida, o se
+/// perdieron los tres corazones.
 #[derive(Clone, Copy, PartialEq)]
 enum GameState {
     Playing,
     Won,
+    Lost,
 }
 
 /// Ángulo del rayo `i` de `total`, repartidos dentro del fov del jugador.
@@ -266,15 +268,22 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, s
     );
 }
 
-/// Pantalla de victoria: un velo oscuro semitransparente sobre la última
-/// escena renderizada (que queda congelada) más el mensaje centrado. Se
-/// dibuja directo con las primitivas de raylib (no con el framebuffer de
-/// software) porque necesita texto, y nuestro framebuffer no sabe dibujar
-/// texto. `draw_text` no soporta UTF-8, así que el mensaje va sin acentos.
-fn draw_win_screen(d: &mut RaylibDrawHandle, width: i32, height: i32) {
+/// Pantalla de fin de partida (victoria o derrota): un velo oscuro
+/// semitransparente sobre la última escena renderizada (que queda
+/// congelada) más un mensaje centrado. Se dibuja directo con las
+/// primitivas de raylib (no con el framebuffer de software) porque necesita
+/// texto, y nuestro framebuffer no sabe dibujar texto. `draw_text` no
+/// soporta UTF-8, así que los mensajes van sin acentos.
+fn draw_end_screen(
+    d: &mut RaylibDrawHandle,
+    width: i32,
+    height: i32,
+    title: &str,
+    title_color: Color,
+    hint: &str,
+) {
     d.draw_rectangle(0, 0, width, height, Color::new(0, 0, 0, 180));
 
-    let title = "GANASTE!";
     let title_size = 64;
     let title_width = d.measure_text(title, title_size);
     d.draw_text(
@@ -282,10 +291,9 @@ fn draw_win_screen(d: &mut RaylibDrawHandle, width: i32, height: i32) {
         width / 2 - title_width / 2,
         height / 2 - title_size,
         title_size,
-        Color::new(255, 220, 60, 255),
+        title_color,
     );
 
-    let hint = "Llegaste a la puerta de salida. ESC para salir.";
     let hint_size = 22;
     let hint_width = d.measure_text(hint, hint_size);
     d.draw_text(
@@ -295,6 +303,44 @@ fn draw_win_screen(d: &mut RaylibDrawHandle, width: i32, height: i32) {
         hint_size,
         Color::new(230, 230, 230, 255),
     );
+}
+
+/// Un corazón simple (dos círculos + un triángulo) relleno si todavía cuenta
+/// como vida, o apenas un contorno tenue si ya se perdió.
+fn draw_heart(d: &mut RaylibDrawHandle, cx: i32, cy: i32, size: i32, filled: bool) {
+    let color = if filled {
+        Color::new(220, 40, 60, 255)
+    } else {
+        Color::new(70, 70, 78, 255)
+    };
+    let lobe_r = (size / 4) as f32;
+    let lobe_y = cy - size / 6;
+
+    d.draw_circle(cx - size / 4, lobe_y, lobe_r, color);
+    d.draw_circle(cx + size / 4, lobe_y, lobe_r, color);
+    d.draw_triangle(
+        Vector2::new((cx - size / 2) as f32, lobe_y as f32),
+        Vector2::new((cx + size / 2) as f32, lobe_y as f32),
+        Vector2::new(cx as f32, (cy + size / 2) as f32),
+        color,
+    );
+}
+
+/// HUD de vidas: `max_lives` corazones arriba a la derecha, los primeros
+/// `lives` rellenos y el resto apagados.
+fn draw_hearts_hud(d: &mut RaylibDrawHandle, width: i32, lives: u32, max_lives: u32) {
+    const SIZE: i32 = 26;
+    const SPACING: i32 = 8;
+    const MARGIN: i32 = 16;
+
+    let total_width = max_lives as i32 * SIZE + (max_lives as i32 - 1) * SPACING;
+    let start_x = width - MARGIN - total_width + SIZE / 2;
+    let cy = MARGIN + SIZE / 2;
+
+    for i in 0..max_lives {
+        let cx = start_x + i as i32 * (SIZE + SPACING);
+        draw_heart(d, cx, cy, SIZE, i < lives);
+    }
 }
 
 /// `markers` son los sprites que se marcan como puntitos en el mapa 2D (los
@@ -380,6 +426,18 @@ fn main() {
                 game_state = GameState::Won;
                 window.enable_cursor();
             }
+
+            // Sólo tiene sentido revisar daño si no se ganó ya en este mismo
+            // frame (llegar a la meta con un enemigo pegado cuenta como
+            // ganar, no como perder).
+            if game_state == GameState::Playing {
+                player.tick();
+                enemy::damage_player_if_close(&enemies, &mut player);
+                if player.lives == 0 {
+                    game_state = GameState::Lost;
+                    window.enable_cursor();
+                }
+            }
         }
 
         if window.is_key_pressed(KeyboardKey::KEY_TAB) {
@@ -430,8 +488,25 @@ fn main() {
         {
             let mut d = window.begin_drawing(&thread);
             framebuffer.draw(&mut d);
-            if game_state == GameState::Won {
-                draw_win_screen(&mut d, width, height);
+            draw_hearts_hud(&mut d, width, player.lives, player::START_LIVES);
+            match game_state {
+                GameState::Won => draw_end_screen(
+                    &mut d,
+                    width,
+                    height,
+                    "GANASTE!",
+                    Color::new(255, 220, 60, 255),
+                    "Llegaste a la puerta de salida. ESC para salir.",
+                ),
+                GameState::Lost => draw_end_screen(
+                    &mut d,
+                    width,
+                    height,
+                    "PERDISTE!",
+                    Color::new(220, 60, 60, 255),
+                    "Un enemigo te alcanzo. ESC para salir.",
+                ),
+                GameState::Playing => {}
             }
         }
     }

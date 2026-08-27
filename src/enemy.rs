@@ -24,6 +24,10 @@ const WANDER_CHANGE_INTERVAL: u32 = 90;
 /// No se acerca más que esto al jugador, para no superponer su sprite con
 /// la cámara.
 const STOP_DISTANCE: f32 = 24.0;
+/// Qué tan cerca tiene que estar un enemigo para hacerle daño al jugador. Un
+/// poco más que `STOP_DISTANCE`, así que en la práctica pasa en cuanto un
+/// enemigo que persigue alcanza al jugador y se para.
+const DAMAGE_RANGE: f32 = 26.0;
 /// Radio de colisión del enemigo contra las paredes (mismo criterio que el jugador).
 const RADIUS: f32 = 8.0;
 
@@ -130,6 +134,20 @@ fn can_see_player(enemy: &Enemy, player: &Player, maze: &Maze, block_size: usize
         (player.pos.x, player.pos.y),
         block_size,
     )
+}
+
+/// Si algún enemigo está lo bastante cerca, le quita una vida al jugador.
+/// `Player::take_damage` ya se encarga de no descontar de más mientras siga
+/// invulnerable, así que aquí basta con detectar "hay alguien encima".
+pub fn damage_player_if_close(enemies: &[Enemy], player: &mut Player) {
+    let close = enemies.iter().any(|enemy| {
+        let dx = player.pos.x - enemy.pos().x;
+        let dy = player.pos.y - enemy.pos().y;
+        (dx * dx + dy * dy).sqrt() < DAMAGE_RANGE
+    });
+    if close {
+        player.take_damage();
+    }
 }
 
 /// Actualiza la visión, el estado y la posición de todos los enemigos para
@@ -334,5 +352,25 @@ mod tests {
         wander(&mut enemy, &maze, block, &mut rng);
 
         assert_eq!(enemy.wander_timer, 0, "debería forzar un cambio de dirección al chocar");
+    }
+
+    #[test]
+    fn player_takes_damage_when_an_enemy_is_close() {
+        let enemies = vec![Enemy::new(Vector2::new(0.0, 0.0), 'e', 20.0, 0.0)];
+        let mut player = Player::new(Vector2::new(10.0, 0.0), 0.0, PI / 3.0);
+
+        damage_player_if_close(&enemies, &mut player);
+
+        assert_eq!(player.lives, crate::player::START_LIVES - 1);
+    }
+
+    #[test]
+    fn player_takes_no_damage_when_every_enemy_is_far() {
+        let enemies = vec![Enemy::new(Vector2::new(0.0, 0.0), 'e', 20.0, 0.0)];
+        let mut player = Player::new(Vector2::new(1000.0, 0.0), 0.0, PI / 3.0);
+
+        damage_player_if_close(&enemies, &mut player);
+
+        assert_eq!(player.lives, crate::player::START_LIVES);
     }
 }

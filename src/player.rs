@@ -9,6 +9,12 @@ const MOUSE_SENSITIVITY: f32 = 0.0035;
 /// Radio del jugador para colisiones: evita que el centro se pegue a la pared.
 const RADIUS: f32 = 8.0;
 
+/// Corazones con los que arranca el jugador.
+pub const START_LIVES: u32 = 3;
+/// Frames de invulnerabilidad tras recibir daño (a 60 fps, ~1.2s), para que
+/// un enemigo pegado al jugador no le quite las 3 vidas de un solo tirón.
+const INVULN_FRAMES: u32 = 72;
+
 /// El jugador es el punto de vista del mundo: dónde está y hacia dónde ve.
 pub struct Player {
     /// Posición en pixeles dentro del framebuffer, no en celdas.
@@ -17,11 +23,21 @@ pub struct Player {
     pub a: f32,
     /// Campo de visión en radianes, se usará al proyectar en 3D.
     pub fov: f32,
+    /// Corazones que le quedan. Llega a 0 -> game over.
+    pub lives: u32,
+    /// Frames que faltan para poder volver a recibir daño.
+    invuln_timer: u32,
 }
 
 impl Player {
     pub fn new(pos: Vector2, a: f32, fov: f32) -> Self {
-        Player { pos, a, fov }
+        Player {
+            pos,
+            a,
+            fov,
+            lives: START_LIVES,
+            invuln_timer: 0,
+        }
     }
 
     /// Construye al jugador al centro de la celda (cell_x, cell_y) del mapa.
@@ -35,6 +51,28 @@ impl Player {
             a,
             fov,
         )
+    }
+
+    /// Hace avanzar el tiempo de invulnerabilidad. Se llama una vez por
+    /// frame mientras la partida sigue en curso.
+    pub fn tick(&mut self) {
+        if self.invuln_timer > 0 {
+            self.invuln_timer -= 1;
+        }
+    }
+
+    pub fn is_invulnerable(&self) -> bool {
+        self.invuln_timer > 0
+    }
+
+    /// Resta un corazón, salvo que el jugador siga invulnerable por un golpe
+    /// reciente (o ya esté en 0). No hace nada si no hay daño que aplicar.
+    pub fn take_damage(&mut self) {
+        if self.is_invulnerable() || self.lives == 0 {
+            return;
+        }
+        self.lives -= 1;
+        self.invuln_timer = INVULN_FRAMES;
     }
 }
 
@@ -142,5 +180,58 @@ mod tests {
         let (dx, dy) = move_vector(angle, MOVE_SPEED, 0.0);
         assert!((dx - MOVE_SPEED * angle.cos()).abs() < 1e-4);
         assert!((dy - MOVE_SPEED * angle.sin()).abs() < 1e-4);
+    }
+
+    #[test]
+    fn taking_damage_costs_one_life_and_grants_invulnerability() {
+        let mut player = Player::new(Vector2::new(0.0, 0.0), 0.0, PI / 3.0);
+        assert_eq!(player.lives, START_LIVES);
+        assert!(!player.is_invulnerable());
+
+        player.take_damage();
+        assert_eq!(player.lives, START_LIVES - 1);
+        assert!(player.is_invulnerable());
+    }
+
+    #[test]
+    fn cannot_lose_a_second_life_while_still_invulnerable() {
+        let mut player = Player::new(Vector2::new(0.0, 0.0), 0.0, PI / 3.0);
+        player.take_damage();
+        let lives_after_first_hit = player.lives;
+
+        // Un enemigo pegado al jugador varios frames seguidos no debería
+        // seguir quitando vidas mientras dura la invulnerabilidad.
+        for _ in 0..INVULN_FRAMES - 1 {
+            player.take_damage();
+            player.tick();
+        }
+
+        assert_eq!(player.lives, lives_after_first_hit);
+    }
+
+    #[test]
+    fn can_lose_a_life_again_once_invulnerability_runs_out() {
+        let mut player = Player::new(Vector2::new(0.0, 0.0), 0.0, PI / 3.0);
+        player.take_damage();
+
+        for _ in 0..INVULN_FRAMES {
+            player.tick();
+        }
+        assert!(!player.is_invulnerable());
+
+        player.take_damage();
+        assert_eq!(player.lives, START_LIVES - 2);
+    }
+
+    #[test]
+    fn lives_do_not_go_below_zero() {
+        let mut player = Player::new(Vector2::new(0.0, 0.0), 0.0, PI / 3.0);
+        for _ in 0..10 {
+            player.take_damage();
+            for _ in 0..INVULN_FRAMES {
+                player.tick();
+            }
+        }
+        assert_eq!(player.lives, 0);
     }
 }
