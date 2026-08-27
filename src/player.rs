@@ -4,8 +4,10 @@ use std::f32::consts::PI;
 
 /// Pixeles que avanza el jugador por frame.
 const MOVE_SPEED: f32 = 4.0;
-/// Radianes que gira la cámara por frame.
+/// Radianes que gira la cámara por frame con el teclado.
 const ROTATION_SPEED: f32 = PI / 60.0;
+/// Radianes que gira la cámara por cada pixel que se mueve el mouse en horizontal.
+const MOUSE_SENSITIVITY: f32 = 0.0035;
 /// Radio del jugador para colisiones: evita que el centro se pegue a la pared.
 const RADIUS: f32 = 8.0;
 
@@ -59,7 +61,8 @@ fn is_free(maze: &Maze, x: f32, y: f32, block_size: usize) -> bool {
     true
 }
 
-/// W/S avanzan y retroceden en la dirección de vista, A/D giran la cámara.
+/// W/S avanzan y retroceden en la dirección de vista; A/D y el mouse (eje
+/// horizontal) giran la cámara.
 pub fn process_events(
     player: &mut Player,
     window: &RaylibHandle,
@@ -72,6 +75,15 @@ pub fn process_events(
     if window.is_key_down(KeyboardKey::KEY_D) {
         player.a += ROTATION_SPEED;
     }
+
+    // Sólo cuenta el movimiento del mouse mientras el cursor está capturado
+    // (oculto y centrado por raylib vía disable_cursor): si el usuario lo
+    // liberó con TAB para hacer otra cosa, moverlo no debería girar la cámara.
+    if window.is_cursor_hidden() {
+        let mouse_dx = window.get_mouse_delta().x;
+        player.a += mouse_dx * MOUSE_SENSITIVITY;
+    }
+
     // Mantener el ángulo en [0, 2PI) para que no crezca sin límite.
     player.a = player.a.rem_euclid(2.0 * PI);
 

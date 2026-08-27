@@ -293,6 +293,10 @@ fn main() {
         .title("Laberinto")
         .build();
     window.set_target_fps(60);
+    // Oculta y centra el cursor en cada frame: así get_mouse_delta() da
+    // movimiento relativo continuo en vez de toparse con el borde de la
+    // ventana, que es lo que se necesita para girar la cámara con el mouse.
+    window.disable_cursor();
 
     let mut framebuffer = Framebuffer::new(&mut window, &thread, width, height);
     framebuffer.set_background_color(Color::new(25, 25, 35, 255));
@@ -309,12 +313,19 @@ fn main() {
         player.fov
     );
     println!(
-        "W/S: avanzar | A/D: girar | M: mapa completo | N: minimapa | F1: guardar maze.png"
+        "W/S: avanzar | A/D o mouse: girar | M: mapa completo | N: minimapa | TAB: soltar el mouse | F1: guardar maze.png"
     );
 
     while !window.window_should_close() {
         process_events(&mut player, &window, &maze, BLOCK_SIZE);
 
+        if window.is_key_pressed(KeyboardKey::KEY_TAB) {
+            if window.is_cursor_hidden() {
+                window.enable_cursor();
+            } else {
+                window.disable_cursor();
+            }
+        }
         if window.is_key_pressed(KeyboardKey::KEY_M) {
             mode = if mode == Mode::Map2D {
                 Mode::World3D
