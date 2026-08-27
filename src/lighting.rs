@@ -1,18 +1,21 @@
 use raylib::prelude::*;
 
 /// Qué tan lejos (en pixeles) alcanza la "linterna" del jugador antes de que
-/// una pared se vea prácticamente negra.
-const TORCH_RANGE: f32 = 320.0;
+/// una pared se vea prácticamente negra. Corto a propósito: un pasillo
+/// entero no debería verse de un vistazo, sólo lo que tiene enfrente.
+const TORCH_RANGE: f32 = 220.0;
 
 /// Brillo mínimo aunque algo esté fuera del alcance de la linterna: nunca
 /// baja a negro puro, para no perder del todo la silueta del laberinto.
-const AMBIENT: f32 = 0.05;
+/// Casi cero: el resto del mapa debe sentirse como oscuridad real, no como
+/// una habitación en penumbra.
+const AMBIENT: f32 = 0.015;
 
 /// Qué tanto oscurece el viñeteado los bordes de la pantalla respecto al
 /// centro (0 = sin viñeteado, 1 = los bordes casi no reciben luz). Simula
 /// que la linterna es un cono apuntando al frente, no una luz que ilumina
 /// parejo todo lo que entra en el FOV.
-const VIGNETTE_STRENGTH: f32 = 0.5;
+const VIGNETTE_STRENGTH: f32 = 0.8;
 
 /// Intensidad de luz (0.0..1.0) de la linterna del jugador sobre un punto a
 /// `distance` pixeles de la cámara y a `angle_offset` radianes del centro de

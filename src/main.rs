@@ -149,6 +149,39 @@ fn render_map2d(
     render_player(framebuffer, player);
 }
 
+/// Pinta el piso y el techo, fila por fila en vez de columna por columna:
+/// a diferencia de las paredes, toda una fila completa de piso/techo queda
+/// a la misma distancia real de la cámara sin importar la columna (fórmula
+/// estándar de floor-casting), así que se puede oscurecer con la misma
+/// linterna que las paredes sin repetir el cálculo por cada pixel ni
+/// perder FPS: son sólo `height` rellenos en vez de uno por columna. Las
+/// columnas con pared quedan tapadas después, en el propio loop de rayos.
+fn draw_floor_and_ceiling(framebuffer: &mut Framebuffer, half_fov: f32, distance_to_plane: f32) {
+    let width = framebuffer.width;
+    let height = framebuffer.height;
+    let half_height = height as f32 / 2.0;
+    // Qué tan "alta" está la cámara sobre el piso, en las mismas unidades
+    // que BLOCK_SIZE: se asume a medio camino entre piso y techo, igual que
+    // ya asume el resto del raycaster (paredes centradas en half_height).
+    let camera_height = BLOCK_SIZE as f32 / 2.0;
+
+    for y in 0..height {
+        let center_offset = (y as f32 - half_height).abs();
+        if center_offset < 1.0 {
+            continue; // Fila del horizonte: siempre tapada por una pared.
+        }
+        let row_distance = camera_height * distance_to_plane / center_offset;
+        let shade = lighting::torch_intensity(row_distance, 0.0, half_fov);
+        let base = if (y as f32) < half_height {
+            SKY_COLOR
+        } else {
+            FLOOR_COLOR
+        };
+        framebuffer.set_current_color(lighting::apply(base, shade));
+        framebuffer.fill_rect(0, y, width, 1);
+    }
+}
+
 /// Vista en primera persona: un rayo por columna de pantalla y cada distancia
 /// se convierte en la altura de esa columna de pared, texturizada pixel por
 /// pixel a partir del punto exacto donde el rayo pegó. Al final se dibujan
@@ -175,6 +208,8 @@ fn render_world3d(
     // columna. Los sprites la usan para saber si quedan tapados.
     let mut z_buffer = vec![f32::INFINITY; num_rays];
 
+    draw_floor_and_ceiling(framebuffer, half_fov, distance_to_plane);
+
     for i in 0..num_rays {
         let a = ray_angle(player, i, num_rays);
         let intersect = cast_ray(maze, player, a, BLOCK_SIZE);
@@ -192,11 +227,6 @@ fn render_world3d(
         let x = i as i32;
         let top = (top_f as i32).clamp(0, height);
         let bottom = (bottom_f as i32).clamp(0, height);
-
-        framebuffer.set_current_color(SKY_COLOR);
-        framebuffer.fill_rect(x, 0, 1, top);
-        framebuffer.set_current_color(FLOOR_COLOR);
-        framebuffer.fill_rect(x, bottom, 1, height - bottom);
 
         if intersect.impact == ' ' {
             continue; // El rayo se salió del mapa: no hay pared que texturizar.
