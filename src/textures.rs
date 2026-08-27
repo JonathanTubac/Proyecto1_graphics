@@ -13,7 +13,7 @@ const FALLBACK_CHAR: char = '#';
 /// Caracteres que son sprites (billboards que miran al jugador) en vez de
 /// texturas de pared: su marcador de posición se genera distinto (con fondo
 /// transparente) y no participan del patrón de ladrillo.
-const SPRITE_CHARS: &[char] = &['e', 'g', 't'];
+const SPRITE_CHARS: &[char] = &['e', 'b', '1', '2', '3', '4', 'g', 't'];
 
 /// Color reservado como "transparente" en las texturas de sprites: cualquier
 /// pixel de ese color se salta al dibujarlo, dejando ver lo que haya detrás
@@ -85,6 +85,11 @@ impl TextureManager {
             ('|', "assets/wall1.png"),
             (FALLBACK_CHAR, "assets/wall3.png"), // default/fallback
             ('e', "assets/sprite_enemy.png"),
+            ('b', "assets/sprite_enemy_back.png"), // enemigo visto de espaldas
+            ('1', "assets/sprite_enemy_run_a.png"), // corriendo, de frente, cuadro A
+            ('2', "assets/sprite_enemy_run_b.png"), // corriendo, de frente, cuadro B
+            ('3', "assets/sprite_enemy_run_back_a.png"), // corriendo, de espaldas, cuadro A
+            ('4', "assets/sprite_enemy_run_back_b.png"), // corriendo, de espaldas, cuadro B
             ('g', "assets/sprite_door.png"), // meta: puerta de salida
             ('t', "assets/sprite_totem.png"), // tótem que hay que destruir
         ];
@@ -204,9 +209,16 @@ fn generate_placeholder_sprite(ch: char) -> Image {
 /// ojos que "brillan" en el hueco de la capucha. Para un juego de terror
 /// funciona mejor no dibujarle cara que intentar una cara amenazante: lo
 /// que da miedo es no poder ver qué es, sólo que te está mirando.
+///
+/// `ch` decide tanto de qué lado se ve (frente, con ojos; espaldas, sin
+/// ellos) como la pose de los brazos (quieto, o uno de los dos cuadros de
+/// carrera que se alternan al ritmo de sus pasos — ver
+/// `Enemy::sprite_for_viewer`).
 fn draw_humanoid_shape(image: &mut Image, size: i32, ch: char) {
     let (body, edge, eye_glow, eye_core) = horror_palette(ch);
     let w = size as f32;
+    let front = matches!(ch, 'e' | '1' | '2');
+    let arms = arm_pose(ch);
 
     // Túnica: se ensancha de los "hombros" hacia el piso. Dos triángulos
     // superpuestos (el de abajo, un poco más chico) dan un borde con volumen
@@ -242,26 +254,71 @@ fn draw_humanoid_shape(image: &mut Image, size: i32, ch: char) {
         );
     }
 
-    // Brazos flacos colgando a los lados, más largos que el cuerpo.
-    image.draw_line_ex(Vector2::new(w * 0.12, w * 0.38), Vector2::new(w * 0.02, w * 0.86), 3, edge);
-    image.draw_line_ex(Vector2::new(w * 0.88, w * 0.38), Vector2::new(w * 0.98, w * 0.86), 3, edge);
+    // Brazos flacos colgando a los lados, más largos que el cuerpo. En las
+    // poses de carrera se abren en direcciones opuestas para simular la
+    // zancada; quieto, cuelgan derechos.
+    image.draw_line_ex(
+        Vector2::new(w * 0.12, w * 0.38),
+        Vector2::new(w * (0.02 + arms.left_dx), w * (0.86 + arms.left_dy)),
+        3,
+        edge,
+    );
+    image.draw_line_ex(
+        Vector2::new(w * 0.88, w * 0.38),
+        Vector2::new(w * (0.98 + arms.right_dx), w * (0.86 + arms.right_dy)),
+        3,
+        edge,
+    );
 
-    // Ojos: el único rasgo visible, mirando fijo desde el hueco de la
-    // capucha. Con la linterna del jugador (ver `crate::lighting`) todo lo
-    // que esté lejos se va casi a negro, así que estos siguen viéndose
-    // brillar incluso cuando el resto de la figura ya se perdió en la sombra.
-    let eye_y = (w * 0.24) as i32;
-    let eye_dx = (w * 0.075) as i32;
-    for dx in [-eye_dx, eye_dx] {
-        image.draw_circle((w * 0.5) as i32 + dx, eye_y, (w * 0.045) as i32, eye_glow);
-        image.draw_circle((w * 0.5) as i32 + dx, eye_y, (w * 0.02) as i32, eye_core);
+    if front {
+        // Ojos: el único rasgo visible, mirando fijo desde el hueco de la
+        // capucha. Con la linterna del jugador (ver `crate::lighting`) todo
+        // lo que esté lejos se va casi a negro, así que estos siguen
+        // viéndose brillar incluso cuando el resto de la figura ya se
+        // perdió en la sombra.
+        let eye_y = (w * 0.24) as i32;
+        let eye_dx = (w * 0.075) as i32;
+        for dx in [-eye_dx, eye_dx] {
+            image.draw_circle((w * 0.5) as i32 + dx, eye_y, (w * 0.045) as i32, eye_glow);
+            image.draw_circle((w * 0.5) as i32 + dx, eye_y, (w * 0.02) as i32, eye_core);
+        }
+    } else {
+        // De espaldas no hay ojos que mostrar: en cambio, una costura al
+        // centro de la capucha y la túnica, para que no se vea igual que un
+        // frente sin ojos.
+        image.draw_line(
+            (w * 0.5) as i32,
+            (w * 0.10) as i32,
+            (w * 0.5) as i32,
+            (w * 0.90) as i32,
+            edge,
+        );
+    }
+}
+
+/// Corrimiento de cada brazo respecto a su posición en reposo, para las dos
+/// poses de carrera. Se alternan entre sí para que, con la animación, se
+/// vean como una zancada en vez de un solo cuadro estático.
+struct ArmPose {
+    left_dx: f32,
+    left_dy: f32,
+    right_dx: f32,
+    right_dy: f32,
+}
+
+fn arm_pose(ch: char) -> ArmPose {
+    match ch {
+        '1' | '3' => ArmPose { left_dx: -0.07, left_dy: -0.10, right_dx: 0.07, right_dy: 0.10 },
+        '2' | '4' => ArmPose { left_dx: 0.07, left_dy: 0.10, right_dx: -0.07, right_dy: -0.10 },
+        _ => ArmPose { left_dx: 0.0, left_dy: 0.0, right_dx: 0.0, right_dy: 0.0 },
     }
 }
 
 fn horror_palette(ch: char) -> (Color, Color, Color, Color) {
     match ch {
-        // enemigo: túnica casi negra, ojos rojo brillante.
-        'e' => (
+        // enemigo (cualquier vista o pose): túnica casi negra, ojos rojo
+        // brillante cuando se le ve de frente.
+        'e' | 'b' | '1' | '2' | '3' | '4' => (
             Color::new(12, 10, 15, 255),
             Color::new(28, 22, 30, 255),
             Color::new(230, 15, 15, 255),

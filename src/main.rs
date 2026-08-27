@@ -386,6 +386,35 @@ fn draw_hearts_hud(d: &mut RaylibDrawHandle, width: i32, lives: u32, max_lives: 
     }
 }
 
+/// Barra de energía para correr, abajo a la izquierda: se vacía corriendo
+/// (Shift) y se rellena caminando o parado. Se pone rojiza cuando queda
+/// poca, para avisar que ya casi no se puede seguir corriendo.
+fn draw_stamina_bar(d: &mut RaylibDrawHandle, height: i32, stamina: f32, max_stamina: f32) {
+    const WIDTH: i32 = 200;
+    const BAR_HEIGHT: i32 = 14;
+    const MARGIN: i32 = 16;
+
+    let x = MARGIN;
+    let y = height - MARGIN - BAR_HEIGHT;
+    let pct = (stamina / max_stamina).clamp(0.0, 1.0);
+
+    let label = "Energia";
+    let label_size = 16;
+    d.draw_text(label, x, y - label_size - 4, label_size, Color::new(200, 200, 205, 220));
+
+    d.draw_rectangle(x, y, WIDTH, BAR_HEIGHT, Color::new(20, 20, 24, 220));
+    let fill_color = if pct < 0.25 {
+        Color::new(190, 70, 60, 255)
+    } else {
+        Color::new(100, 205, 215, 255)
+    };
+    let fill_width = (WIDTH as f32 * pct) as i32;
+    if fill_width > 0 {
+        d.draw_rectangle(x, y, fill_width, BAR_HEIGHT, fill_color);
+    }
+    d.draw_rectangle_lines(x, y, WIDTH, BAR_HEIGHT, Color::new(210, 210, 215, 200));
+}
+
 /// Contador de tótems destruidos, justo debajo de los corazones.
 fn draw_totem_counter(d: &mut RaylibDrawHandle, width: i32, destroyed: usize, total: usize) {
     let text = format!("Totems: {destroyed}/{total}");
@@ -487,7 +516,7 @@ fn main() {
         player.fov
     );
     println!(
-        "W/S: avanzar | A/D: strafe | mouse: girar | E: destruir totem cercano | M: mapa completo | N: minimapa | TAB: soltar el mouse | F1: guardar maze.png"
+        "W/S: avanzar | A/D: strafe | SHIFT: correr | mouse: girar | E: destruir totem cercano | M: mapa completo | N: minimapa | TAB: soltar el mouse | F1: guardar maze.png"
     );
 
     while !window.window_should_close() {
@@ -590,7 +619,11 @@ fn main() {
         // foto de cómo quedó todo después de actualizarlo. Un tótem
         // destruido no produce Sprite (`Totem::sprite` regresa `None`), así
         // que desaparece solo del mundo en cuanto se destruye.
-        let enemy_sprites: Vec<Sprite> = enemies.iter().map(|e| e.sprite).collect();
+        // `sprite_for_viewer` es lo que elige, según la posición del
+        // jugador, si toca la textura de frente o de espaldas y qué cuadro
+        // de la animación de correr.
+        let enemy_sprites: Vec<Sprite> =
+            enemies.iter().map(|e| e.sprite_for_viewer(player.pos)).collect();
         let totem_sprites: Vec<Sprite> = totems.iter().filter_map(|t| t.sprite()).collect();
         let mut world_sprites = enemy_sprites.clone();
         world_sprites.extend_from_slice(&door_sprites);
@@ -622,6 +655,7 @@ fn main() {
             framebuffer.draw(&mut d);
             draw_hearts_hud(&mut d, width, player.lives, player::START_LIVES);
             draw_totem_counter(&mut d, width, totems.len() - totem::remaining(&totems), totems.len());
+            draw_stamina_bar(&mut d, height, player.stamina, player::MAX_STAMINA);
             if game_state == GameState::Playing {
                 if near_totem {
                     draw_interact_hint(&mut d, width, height);
@@ -650,5 +684,6 @@ fn main() {
                 GameState::Playing => {}
             }
         }
+
     }
 }

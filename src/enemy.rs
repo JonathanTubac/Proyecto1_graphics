@@ -35,6 +35,15 @@ const RADIUS: f32 = 8.0;
 /// rápido esté yendo en este momento.
 const BASE_FOOTSTEP_INTERVAL: f32 = 21.0;
 
+/// Caracteres de textura para cada combinación de vista (de frente / de
+/// espaldas) y pose (quieto, o cuadro A/B de la animación de correr).
+const TEX_FRONT_IDLE: char = 'e';
+const TEX_BACK_IDLE: char = 'b';
+const TEX_FRONT_RUN_A: char = '1';
+const TEX_FRONT_RUN_B: char = '2';
+const TEX_BACK_RUN_A: char = '3';
+const TEX_BACK_RUN_B: char = '4';
+
 /// Si un enemigo ve al jugador ahora mismo o no. Se recalcula cada frame a
 /// partir de la visión: no hay memoria, en cuanto lo pierde de vista deja de
 /// perseguir y se queda quieto donde está.
@@ -62,6 +71,9 @@ pub struct Enemy {
     footstep_timer: u32,
     /// Si toca reproducir un sonido de paso justo este frame.
     footstep_due: bool,
+    /// Cuadro de la animación de correr (alterna en cada paso; ver
+    /// `sprite_for_viewer`).
+    anim_frame: bool,
 }
 
 impl Enemy {
@@ -74,6 +86,7 @@ impl Enemy {
             wander_timer: 0,
             footstep_timer: 0,
             footstep_due: false,
+            anim_frame: false,
         }
     }
 
@@ -93,6 +106,36 @@ impl Enemy {
     /// leerlo justo después de llamarla.
     pub fn wants_footstep(&self) -> bool {
         self.footstep_due
+    }
+
+    /// Sprite a dibujar este frame. Elige entre vista de frente o de
+    /// espaldas comparando hacia dónde "mira" el enemigo contra hacia dónde
+    /// queda `viewer` (el jugador) respecto a él; si está persiguiendo,
+    /// además alterna dos cuadros de carrera al ritmo de sus propios pasos
+    /// (el mismo `footstep_timer` que dispara el sonido).
+    pub fn sprite_for_viewer(&self, viewer: Vector2) -> Sprite {
+        let dx = viewer.x - self.pos().x;
+        let dy = viewer.y - self.pos().y;
+        let angle_to_viewer = dy.atan2(dx);
+        let mut diff = angle_to_viewer - self.facing;
+        diff = (diff + PI).rem_euclid(2.0 * PI) - PI;
+        // Si el enemigo mira hacia donde está el jugador, el jugador le ve
+        // el frente; si mira para el otro lado, le ve la espalda. No hay
+        // vista de perfil: a los 90° se parte la diferencia.
+        let front = diff.abs() < PI / 2.0;
+
+        let texture = match (self.state, front, self.anim_frame) {
+            (State::Idle, true, _) => TEX_FRONT_IDLE,
+            (State::Idle, false, _) => TEX_BACK_IDLE,
+            (State::Chasing, true, false) => TEX_FRONT_RUN_A,
+            (State::Chasing, true, true) => TEX_FRONT_RUN_B,
+            (State::Chasing, false, false) => TEX_BACK_RUN_A,
+            (State::Chasing, false, true) => TEX_BACK_RUN_B,
+        };
+
+        let mut sprite = self.sprite;
+        sprite.texture = texture;
+        sprite
     }
 }
 
@@ -211,6 +254,7 @@ fn update_footstep_timer(enemy: &mut Enemy, moved: bool, speed_multiplier: f32) 
 
     if enemy.footstep_timer == 0 {
         enemy.footstep_due = true;
+        enemy.anim_frame = !enemy.anim_frame;
         enemy.footstep_timer = (BASE_FOOTSTEP_INTERVAL / speed_multiplier.max(0.01)) as u32;
     } else {
         enemy.footstep_due = false;
@@ -490,5 +534,36 @@ mod tests {
             count_footsteps(2.0) > count_footsteps(1.0),
             "al doble de velocidad deberían sonar más pasos en el mismo número de frames"
         );
+    }
+
+    #[test]
+    fn shows_front_when_facing_the_viewer() {
+        let mut enemy = Enemy::new(Vector2::new(100.0, 50.0), 'e', 20.0, 0.0); // mira al este
+        enemy.state = State::Idle;
+        let viewer = Vector2::new(200.0, 50.0); // al este del enemigo: justo hacia donde mira
+
+        assert_eq!(enemy.sprite_for_viewer(viewer).texture, TEX_FRONT_IDLE);
+    }
+
+    #[test]
+    fn shows_back_when_facing_away_from_the_viewer() {
+        let mut enemy = Enemy::new(Vector2::new(100.0, 50.0), 'e', 20.0, 0.0); // mira al este
+        enemy.state = State::Idle;
+        let viewer = Vector2::new(0.0, 50.0); // al oeste del enemigo: a sus espaldas
+
+        assert_eq!(enemy.sprite_for_viewer(viewer).texture, TEX_BACK_IDLE);
+    }
+
+    #[test]
+    fn chasing_alternates_run_frames_with_anim_frame() {
+        let mut enemy = Enemy::new(Vector2::new(100.0, 50.0), 'e', 20.0, 0.0);
+        enemy.state = State::Chasing;
+        let viewer = Vector2::new(200.0, 50.0); // de frente
+
+        enemy.anim_frame = false;
+        assert_eq!(enemy.sprite_for_viewer(viewer).texture, TEX_FRONT_RUN_A);
+
+        enemy.anim_frame = true;
+        assert_eq!(enemy.sprite_for_viewer(viewer).texture, TEX_FRONT_RUN_B);
     }
 }
