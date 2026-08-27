@@ -188,26 +188,80 @@ fn generate_placeholder_sprite(ch: char) -> Image {
     image
 }
 
-/// Cuerpo (más ancho, en la mitad inferior) y cabeza (círculo arriba), con
-/// un borde oscuro para que se distinga del fondo del mundo, y un par de
-/// "ojos" para que se note hacia dónde se supone que mira.
+/// Figura encapuchada sin rostro: nada más que una silueta casi negra y dos
+/// ojos que "brillan" en el hueco de la capucha. Para un juego de terror
+/// funciona mejor no dibujarle cara que intentar una cara amenazante: lo
+/// que da miedo es no poder ver qué es, sólo que te está mirando.
 fn draw_humanoid_shape(image: &mut Image, size: i32, ch: char) {
-    let (body, outline) = sprite_palette(ch);
+    let (body, edge, eye_glow, eye_core) = horror_palette(ch);
+    let w = size as f32;
 
-    image.draw_circle(size / 2, size * 3 / 5, size * 3 / 10, outline);
-    image.draw_circle(size / 2, size * 3 / 5, size * 3 / 10 - 3, body);
-    image.draw_circle(size / 2, size / 3, size / 5, outline);
-    image.draw_circle(size / 2, size / 3, size / 5 - 3, body);
+    // Túnica: se ensancha de los "hombros" hacia el piso. Dos triángulos
+    // superpuestos (el de abajo, un poco más chico) dan un borde con volumen
+    // en vez de una silueta plana de un solo tono.
+    image.draw_triangle(
+        Vector2::new(w * 0.5, w * 0.22),
+        Vector2::new(w * 0.06, w * 0.98),
+        Vector2::new(w * 0.94, w * 0.98),
+        edge,
+    );
+    image.draw_triangle(
+        Vector2::new(w * 0.5, w * 0.28),
+        Vector2::new(w * 0.14, w * 0.94),
+        Vector2::new(w * 0.86, w * 0.94),
+        body,
+    );
 
-    let eye_y = size / 3;
-    image.draw_circle(size / 2 - 6, eye_y, 3, outline);
-    image.draw_circle(size / 2 + 6, eye_y, 3, outline);
+    // Capucha: un círculo oscuro y hueco, sin rasgos. El vacío es lo que
+    // inquieta, no una cara dibujada encima.
+    image.draw_circle((w * 0.5) as i32, (w * 0.24) as i32, (w * 0.19) as i32, edge);
+    image.draw_circle((w * 0.5) as i32, (w * 0.25) as i32, (w * 0.16) as i32, body);
+
+    // Dobladillo irregular: se "muerde" la túnica con triángulos del propio
+    // color transparente, como tela rasgada en vez de un corte parejo.
+    for i in 0..4 {
+        let x = w * (0.20 + i as f32 * 0.20);
+        let depth = if i % 2 == 0 { 0.14 } else { 0.09 };
+        image.draw_triangle(
+            Vector2::new(x - w * 0.06, w * 0.94),
+            Vector2::new(x + w * 0.06, w * 0.94),
+            Vector2::new(x, w * (0.94 + depth)),
+            TRANSPARENT_COLOR,
+        );
+    }
+
+    // Brazos flacos colgando a los lados, más largos que el cuerpo.
+    image.draw_line_ex(Vector2::new(w * 0.12, w * 0.38), Vector2::new(w * 0.02, w * 0.86), 3, edge);
+    image.draw_line_ex(Vector2::new(w * 0.88, w * 0.38), Vector2::new(w * 0.98, w * 0.86), 3, edge);
+
+    // Ojos: el único rasgo visible, mirando fijo desde el hueco de la
+    // capucha. Con la linterna del jugador (ver `crate::lighting`) todo lo
+    // que esté lejos se va casi a negro, así que estos siguen viéndose
+    // brillar incluso cuando el resto de la figura ya se perdió en la sombra.
+    let eye_y = (w * 0.24) as i32;
+    let eye_dx = (w * 0.075) as i32;
+    for dx in [-eye_dx, eye_dx] {
+        image.draw_circle((w * 0.5) as i32 + dx, eye_y, (w * 0.045) as i32, eye_glow);
+        image.draw_circle((w * 0.5) as i32 + dx, eye_y, (w * 0.02) as i32, eye_core);
+    }
 }
 
-fn sprite_palette(ch: char) -> (Color, Color) {
+fn horror_palette(ch: char) -> (Color, Color, Color, Color) {
     match ch {
-        'e' => (Color::new(200, 60, 60, 255), Color::new(90, 15, 15, 255)), // enemigo: rojo
-        _ => (Color::new(200, 180, 60, 255), Color::new(90, 75, 15, 255)),  // default: amarillo
+        // enemigo: túnica casi negra, ojos rojo brillante.
+        'e' => (
+            Color::new(12, 10, 15, 255),
+            Color::new(28, 22, 30, 255),
+            Color::new(230, 15, 15, 255),
+            Color::new(255, 210, 200, 255),
+        ),
+        // default: misma silueta, ojos ámbar para distinguirse del enemigo.
+        _ => (
+            Color::new(20, 18, 22, 255),
+            Color::new(40, 34, 40, 255),
+            Color::new(230, 200, 60, 255),
+            Color::new(255, 240, 200, 255),
+        ),
     }
 }
 
