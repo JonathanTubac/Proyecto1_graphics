@@ -3,6 +3,7 @@ mod caster;
 mod enemy;
 mod framebuffer;
 mod lighting;
+mod locker;
 mod maze;
 mod menu;
 mod player;
@@ -472,6 +473,37 @@ fn draw_locked_door_hint(d: &mut RaylibDrawHandle, width: i32, remaining: usize)
     d.draw_text(&text, width / 2 - text_width / 2, 60, size, Color::new(230, 120, 120, 255));
 }
 
+/// Pista de "puedes esconderte" cuando el jugador está junto a un locker y
+/// todavía no está escondido (una vez adentro, `draw_hiding_view` ya trae
+/// su propia pista para salir).
+fn draw_locker_hint(d: &mut RaylibDrawHandle, width: i32, height: i32) {
+    let text = "[E] Esconderte en el locker";
+    let size = 22;
+    let text_width = d.measure_text(text, size);
+    d.draw_text(text, width / 2 - text_width / 2, height - 60, size, Color::new(230, 230, 230, 255));
+}
+
+/// Vista mientras el jugador está escondido: en vez de la vista 3D (de tan
+/// cerca, el sprite del locker taparía toda la pantalla), una pantalla
+/// oscura con rendijas horizontales, como si se viera apenas por las
+/// ranuras de ventilación de la puerta.
+fn draw_hiding_view(d: &mut RaylibDrawHandle, width: i32, height: i32) {
+    d.draw_rectangle(0, 0, width, height, Color::new(3, 3, 5, 255));
+
+    let slat_h = 5;
+    let gap = 34;
+    let mut y = 30;
+    while y < height {
+        d.draw_rectangle(0, y, width, slat_h, Color::new(24, 21, 16, 200));
+        y += gap;
+    }
+
+    let text = "Escondido... [E] Salir";
+    let size = 26;
+    let text_width = d.measure_text(text, size);
+    d.draw_text(text, width / 2 - text_width / 2, height - 80, size, Color::new(200, 200, 205, 220));
+}
+
 /// `enemy_markers`/`totem_markers` son los sprites que se marcan como
 /// puntitos en el mapa 2D (para ubicar amenazas y objetivos de un vistazo);
 /// `world` es todo lo que se dibuja como billboard en la vista 3D (enemigos
@@ -634,6 +666,10 @@ fn run_level(
     // sólo se planta sobre la celda de meta para poder verla en 3D.
     let door_sprites = sprites::spawn_from_maze(maze, BLOCK_SIZE, 'g', 'g');
     let mut totems = totem::spawn_from_maze(maze, BLOCK_SIZE, 't');
+    // Los lockers no tienen estado propio (a diferencia de los tótems,
+    // nunca se "gastan"): esconderse es cosa de `player.hidden`, no de
+    // ellos, así que la lista nunca cambia después de armarla.
+    let lockers = locker::spawn_from_maze(maze, BLOCK_SIZE, 'l');
     let mut mode = Mode::World3D;
     let mut show_minimap = true;
     let mut game_state = GameState::Playing;
@@ -646,7 +682,7 @@ fn run_level(
         player.fov
     );
     println!(
-        "W/S: avanzar | A/D: strafe | SHIFT: correr | mouse: girar | E: destruir totem cercano | M: mapa completo | N: minimapa | TAB: soltar el mouse | F1: guardar maze.png"
+        "W/S: avanzar | A/D: strafe | SHIFT: correr | mouse: girar | E: destruir totem o esconderte en un locker | M: mapa completo | N: minimapa | TAB: soltar el mouse | F1: guardar maze.png"
     );
 
     loop {
@@ -658,6 +694,7 @@ fn run_level(
         // Sólo importan mientras se sigue jugando; se usan más abajo para
         // decidir qué pistas dibujar en el HUD.
         let mut near_totem = false;
+        let mut near_locker = false;
         let mut on_locked_goal = false;
 
         if game_state == GameState::Playing {
@@ -693,22 +730,41 @@ fn run_level(
                 sfx.set_totem_hum_proximity(totem::nearest_proximity(&totems, &player));
             }
 
-            if let Some(idx) = totem::interactable(&totems, &player) {
-                near_totem = true;
-                if window.is_key_pressed(KeyboardKey::KEY_E) {
-                    totem::destroy(&mut totems, idx);
+            // Escondido en un locker no se puede destruir un tótem (ni
+            // tendría sentido: es la misma tecla que usa para salir).
+            if !player.hidden {
+                if let Some(idx) = totem::interactable(&totems, &player) {
+                    near_totem = true;
+                    if window.is_key_pressed(KeyboardKey::KEY_E) {
+                        totem::destroy(&mut totems, idx);
 
-                    if enemies.is_empty() {
-                        // Éste era el primer tótem: aquí despierta el único
-                        // enemigo del nivel.
-                        enemies = enemy::spawn_from_maze(&maze, BLOCK_SIZE, 'e', 'e', 0.0);
-                        sfx.play_first_totem_broken();
-                        sfx.switch_to_tense_ambient();
-                    } else if totem::all_destroyed(&totems) {
-                        sfx.play_last_totem_destroyed();
-                    } else {
-                        sfx.play_any_totem_destroyed();
+                        if enemies.is_empty() {
+                            // Éste era el primer tótem: aquí despierta el único
+                            // enemigo del nivel.
+                            enemies = enemy::spawn_from_maze(&maze, BLOCK_SIZE, 'e', 'e', 0.0);
+                            sfx.play_first_totem_broken();
+                            sfx.switch_to_tense_ambient();
+                        } else if totem::all_destroyed(&totems) {
+                            sfx.play_last_totem_destroyed();
+                        } else {
+                            sfx.play_any_totem_destroyed();
+                        }
+
+                        // Cada tótem que se rompe manda al enemigo directo
+                        // hacia el jugador, lo vea o no: esconderse en un
+                        // locker (arriba) es la única forma de que no lo
+                        // encuentre.
+                        enemy::alert_all(&mut enemies);
                     }
+                }
+            }
+
+            // Un locker no tiene estado propio: la misma tecla entra y
+            // sale, así que basta con estar cerca de alguno.
+            if locker::nearby(&lockers, &player) {
+                near_locker = true;
+                if window.is_key_pressed(KeyboardKey::KEY_E) {
+                    player.hidden = !player.hidden;
                 }
             }
 
@@ -775,21 +831,28 @@ fn run_level(
         let enemy_sprites: Vec<Sprite> =
             enemies.iter().map(|e| e.sprite_for_viewer(player.pos)).collect();
         let totem_sprites: Vec<Sprite> = totems.iter().filter_map(|t| t.sprite()).collect();
+        let locker_sprites: Vec<Sprite> = lockers.iter().map(|l| l.sprite()).collect();
         let mut world_sprites = enemy_sprites.clone();
         world_sprites.extend_from_slice(&door_sprites);
         world_sprites.extend_from_slice(&totem_sprites);
+        world_sprites.extend_from_slice(&locker_sprites);
 
-        render(
-            framebuffer,
-            &maze,
-            &player,
-            mode,
-            show_minimap,
-            &textures,
-            &enemy_sprites,
-            &totem_sprites,
-            &world_sprites,
-        );
+        // Escondido, no se renderiza la vista 3D normal: de tan cerca, el
+        // sprite del locker taparía toda la pantalla. En cambio se dibuja
+        // `draw_hiding_view` más abajo, directo con `d`.
+        if !player.hidden {
+            render(
+                framebuffer,
+                &maze,
+                &player,
+                mode,
+                show_minimap,
+                &textures,
+                &enemy_sprites,
+                &totem_sprites,
+                &world_sprites,
+            );
+        }
 
         if window.is_key_pressed(KeyboardKey::KEY_F1) {
             framebuffer.render_to_file("maze.png");
@@ -799,16 +862,25 @@ fn run_level(
             );
         }
 
-        framebuffer.upload();
+        if !player.hidden {
+            framebuffer.upload();
+        }
         {
             let mut d = window.begin_drawing(&thread);
-            framebuffer.draw(&mut d);
+            if player.hidden {
+                draw_hiding_view(&mut d, width, height);
+            } else {
+                framebuffer.draw(&mut d);
+            }
             draw_hearts_hud(&mut d, width, player.lives, player::START_LIVES);
             draw_totem_counter(&mut d, width, totems.len() - totem::remaining(&totems), totems.len());
             draw_stamina_bar(&mut d, height, player.stamina, player::MAX_STAMINA);
             if game_state == GameState::Playing {
                 if near_totem {
                     draw_interact_hint(&mut d, width, height);
+                }
+                if near_locker && !player.hidden {
+                    draw_locker_hint(&mut d, width, height);
                 }
                 if on_locked_goal {
                     draw_locked_door_hint(&mut d, width, totem::remaining(&totems));

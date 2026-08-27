@@ -13,7 +13,7 @@ const FALLBACK_CHAR: char = '#';
 /// Caracteres que son sprites (billboards que miran al jugador) en vez de
 /// texturas de pared: su marcador de posición se genera distinto (con fondo
 /// transparente) y no participan del patrón de ladrillo.
-const SPRITE_CHARS: &[char] = &['e', 'b', '1', '2', '3', '4', 'g', 't'];
+const SPRITE_CHARS: &[char] = &['e', 'b', '1', '2', '3', '4', 'g', 't', 'l'];
 
 /// Color reservado como "transparente" en las texturas de sprites: cualquier
 /// pixel de ese color se salta al dibujarlo, dejando ver lo que haya detrás
@@ -92,6 +92,7 @@ impl TextureManager {
             ('4', "assets/sprite_enemy_run_back_b.png"), // corriendo, de espaldas, cuadro B
             ('g', "assets/sprite_door.png"), // meta: puerta de salida
             ('t', "assets/sprite_totem.png"), // tótem que hay que destruir
+            ('l', "assets/sprite_locker.png"), // locker para esconderse del enemigo
         ];
 
         // El proyecto puede no traer arte todavía: en vez de que el programa
@@ -199,6 +200,7 @@ fn generate_placeholder_sprite(ch: char) -> Image {
     match ch {
         'g' => draw_door_shape(&mut image, SIZE),
         't' => draw_totem_shape(&mut image, SIZE),
+        'l' => draw_locker_shape(&mut image, SIZE),
         _ => draw_humanoid_shape(&mut image, SIZE, ch),
     }
 
@@ -394,6 +396,46 @@ fn draw_totem_shape(image: &mut Image, size: i32) {
     let cy = (w * 0.34) as i32;
     image.draw_circle(cx, cy, (w * 0.07) as i32, rune_glow);
     image.draw_circle(cx, cy, (w * 0.03) as i32, rune_core);
+}
+
+/// Casillero metálico donde el jugador se esconde del enemigo (ver
+/// `crate::locker`): puerta con rejillas de ventilación, línea central como
+/// si fueran dos hojas, manija con candado y un par de rayones/óxido para
+/// que no se vea impecable. A diferencia de los sprites humanoides, cubre
+/// todo el cuadro (nada de fondo transparente): es un mueble sólido, no
+/// algo que se recorte contra el fondo.
+fn draw_locker_shape(image: &mut Image, size: i32) {
+    let metal = Color::new(46, 52, 58, 255);
+    let metal_dark = Color::new(24, 28, 32, 255);
+    let vent = Color::new(14, 16, 18, 255);
+    let handle = Color::new(150, 140, 40, 255);
+    let w = size as f32;
+
+    image.draw_rectangle(0, 0, size, size, metal_dark);
+    image.draw_rectangle(
+        (w * 0.06) as i32,
+        (w * 0.04) as i32,
+        (w * 0.88) as i32,
+        (w * 0.92) as i32,
+        metal,
+    );
+
+    // Rejillas de ventilación cerca de arriba, como en un casillero real.
+    for i in 0..5 {
+        let y = (w * (0.14 + i as f32 * 0.035)) as i32;
+        image.draw_rectangle((w * 0.14) as i32, y, (w * 0.72) as i32, (w * 0.02) as i32, vent);
+    }
+
+    // Línea central: como si la puerta fueran dos hojas.
+    image.draw_line((w * 0.5) as i32, (w * 0.04) as i32, (w * 0.5) as i32, (w * 0.96) as i32, metal_dark);
+
+    // Manija con candado, a un lado de la línea central.
+    image.draw_rectangle((w * 0.56) as i32, (w * 0.48) as i32, (w * 0.08) as i32, (w * 0.14) as i32, handle);
+    image.draw_circle((w * 0.6) as i32, (w * 0.5) as i32, (w * 0.02) as i32, metal_dark);
+
+    // Rayones/óxido, para que no se vea impecable.
+    image.draw_line((w * 0.2) as i32, (w * 0.6) as i32, (w * 0.3) as i32, (w * 0.85) as i32, metal_dark);
+    image.draw_line((w * 0.7) as i32, (w * 0.3) as i32, (w * 0.78) as i32, (w * 0.5) as i32, metal_dark);
 }
 
 /// Genera una textura de 64x64 con un patrón de ladrillo simple, un color

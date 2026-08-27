@@ -34,6 +34,13 @@ const RADIUS: f32 = 8.0;
 /// velocidad base (a 60 fps, ~0.35s entre pasos). Se acorta según qué tan
 /// rápido esté yendo en este momento.
 const BASE_FOOTSTEP_INTERVAL: f32 = 21.0;
+/// Cuántos frames sigue un enemigo "alertado" yendo directo hacia el
+/// jugador sin necesitar verlo, después de que se rompe un tótem: como si
+/// hubiera oído el estruendo y supiera más o menos dónde buscar. A 60fps,
+/// ~10s. Si el jugador se esconde (`Player::hidden`), `can_see_player`
+/// sigue devolviendo falso y `damage_player_if_close` no le hace nada, así
+/// que la alerta por sí sola no basta para encontrarlo: sólo lo acerca.
+const ALERT_DURATION: u32 = 600;
 
 /// Caracteres de textura para cada combinación de vista (de frente / de
 /// espaldas) y pose (quieto, o cuadro A/B de la animación de correr).
@@ -74,6 +81,9 @@ pub struct Enemy {
     /// Cuadro de la animación de correr (alterna en cada paso; ver
     /// `sprite_for_viewer`).
     anim_frame: bool,
+    /// Frames que le quedan de perseguir al jugador a ciegas (sin verlo)
+    /// tras una alerta (ver `alert_all`). 0 = no está alertado.
+    alert_timer: u32,
 }
 
 impl Enemy {
@@ -87,6 +97,7 @@ impl Enemy {
             footstep_timer: 0,
             footstep_due: false,
             anim_frame: false,
+            alert_timer: 0,
         }
     }
 
@@ -169,8 +180,13 @@ pub fn spawn_from_maze(
 
 /// ¿Puede el enemigo ver al jugador desde donde está? Necesita que esté
 /// dentro del rango y del cono de visión, y que no haya una pared de por
-/// medio.
+/// medio. Escondido en un locker (`Player::hidden`), nunca se le ve, sin
+/// importar qué tan cerca o de frente esté.
 fn can_see_player(enemy: &Enemy, player: &Player, maze: &Maze, block_size: usize) -> bool {
+    if player.hidden {
+        return false;
+    }
+
     let dx = player.pos.x - enemy.pos().x;
     let dy = player.pos.y - enemy.pos().y;
     let distance = (dx * dx + dy * dy).sqrt();
@@ -199,7 +215,13 @@ fn can_see_player(enemy: &Enemy, player: &Player, maze: &Maze, block_size: usize
 /// Si algún enemigo está lo bastante cerca, le quita una vida al jugador.
 /// `Player::take_damage` ya se encarga de no descontar de más mientras siga
 /// invulnerable, así que aquí basta con detectar "hay alguien encima".
+/// Escondido en un locker (`Player::hidden`), está a salvo aunque el
+/// enemigo esté parado justo afuera: es el sentido de esconderse.
 pub fn damage_player_if_close(enemies: &[Enemy], player: &mut Player) {
+    if player.hidden {
+        return;
+    }
+
     let close = enemies.iter().any(|enemy| {
         let dx = player.pos.x - enemy.pos().x;
         let dy = player.pos.y - enemy.pos().y;
@@ -226,7 +248,16 @@ pub fn update_enemies(
 ) {
     let mut rng = rand::thread_rng();
     for enemy in enemies {
-        enemy.state = if can_see_player(enemy, player, maze, block_size) {
+        if enemy.alert_timer > 0 {
+            enemy.alert_timer -= 1;
+        }
+
+        // Persigue si lo ve, o si sigue alertado por un tótem roto aunque
+        // no lo vea todavía: ambos casos usan el mismo movimiento (ir
+        // directo hacia el jugador), la diferencia es sólo por qué.
+        let seen = can_see_player(enemy, player, maze, block_size);
+        let hunting = enemy.alert_timer > 0;
+        enemy.state = if seen || hunting {
             State::Chasing
         } else {
             State::Idle
@@ -238,6 +269,17 @@ pub fn update_enemies(
         };
 
         update_footstep_timer(enemy, moved, speed_multiplier);
+    }
+}
+
+/// Pone a todos los enemigos en alerta: durante `ALERT_DURATION` frames van
+/// directo hacia donde está el jugador aunque no lo vean, como si hubieran
+/// oído el tótem romperse. Se llama cada vez que se destruye alguno, así
+/// que romper varios seguidos mantiene la persecución viva en vez de
+/// dejarla expirar a medio camino.
+pub fn alert_all(enemies: &mut [Enemy]) {
+    for enemy in enemies {
+        enemy.alert_timer = ALERT_DURATION;
     }
 }
 
@@ -483,6 +525,73 @@ mod tests {
         damage_player_if_close(&enemies, &mut player);
 
         assert_eq!(player.lives, crate::player::START_LIVES);
+    }
+
+    #[test]
+    fn hidden_player_is_never_seen() {
+        let maze = open_room(10, 5);
+        let block = 20;
+        let enemy = Enemy::new(Vector2::new(40.0, 50.0), 'e', block as f32, 0.0); // mira al este, jugador justo enfrente
+        let mut player = Player::new(Vector2::new(100.0, 50.0), 0.0, PI / 3.0);
+        player.hidden = true;
+
+        assert!(!can_see_player(&enemy, &player, &maze, block));
+    }
+
+    #[test]
+    fn hidden_player_takes_no_damage_even_when_close() {
+        let enemies = vec![Enemy::new(Vector2::new(0.0, 0.0), 'e', 20.0, 0.0)];
+        let mut player = Player::new(Vector2::new(10.0, 0.0), 0.0, PI / 3.0);
+        player.hidden = true;
+
+        damage_player_if_close(&enemies, &mut player);
+
+        assert_eq!(player.lives, crate::player::START_LIVES);
+    }
+
+    #[test]
+    fn alert_makes_enemy_chase_without_seeing_the_player() {
+        let maze = open_room(15, 15);
+        let block = 20;
+        // Mirando al este; el jugador queda detrás (al oeste), fuera del
+        // cono de visión.
+        let mut enemies = vec![Enemy::new(Vector2::new(150.0, 150.0), 'e', block as f32, 0.0)];
+        let player = Player::new(Vector2::new(40.0, 150.0), 0.0, PI / 3.0);
+        assert!(!can_see_player(&enemies[0], &player, &maze, block));
+
+        alert_all(&mut enemies);
+        update_enemies(&mut enemies, &player, &maze, block, 1.0);
+
+        assert!(
+            enemies[0].is_chasing(),
+            "un enemigo alertado debería perseguir aunque no vea al jugador"
+        );
+    }
+
+    #[test]
+    fn alert_wears_off_and_enemy_goes_back_to_wandering() {
+        // Dos cuartos separados por una pared: el jugador nunca queda a la
+        // vista sin importar hacia dónde termine mirando el enemigo
+        // mientras persigue a ciegas.
+        let cells: Vec<Vec<char>> = ["+++++++++++", "+   +     +", "+   +     +", "+++++++++++"]
+            .iter()
+            .map(|r| r.chars().collect())
+            .collect();
+        let maze = Maze::new(cells);
+        let block = 20;
+        let mut enemies = vec![Enemy::new(Vector2::new(40.0, 30.0), 'e', block as f32, 0.0)];
+        let player = Player::new(Vector2::new(140.0, 30.0), 0.0, PI / 3.0);
+
+        alert_all(&mut enemies);
+        for _ in 0..=ALERT_DURATION {
+            assert!(!can_see_player(&enemies[0], &player, &maze, block));
+            update_enemies(&mut enemies, &player, &maze, block, 1.0);
+        }
+
+        assert!(
+            !enemies[0].is_chasing(),
+            "la alerta debería haberse acabado ya"
+        );
     }
 
     #[test]

@@ -171,17 +171,19 @@ fn draw_level_select(d: &mut RaylibDrawHandle, width: i32, height: i32, selected
 fn draw_instructions(d: &mut RaylibDrawHandle, width: i32, height: i32) {
     draw_title(d, width, "INSTRUCCIONES", 60, 44, Color::new(200, 180, 60, 255));
 
-    let lines: [&str; 13] = [
+    let lines: [&str; 15] = [
         "OBJETIVO",
         "Destruye todos los totems y llega a la puerta de salida.",
         "El enemigo despierta al primer totem y se acelera con cada uno.",
+        "Cada totem que rompas lo manda directo a buscarte: escondete en",
+        "un locker (E) si lo tienes encima, ahi no puede verte ni tocarte.",
         "",
         "CONTROLES",
         "W / S      Avanzar / retroceder",
         "A / D      Moverse de lado",
         "SHIFT      Correr (gasta energia)",
         "MOUSE      Girar la camara",
-        "E          Destruir el totem cercano",
+        "E          Destruir el totem cercano, o entrar/salir de un locker",
         "M          Ver el mapa completo",
         "N          Mostrar u ocultar el minimapa",
         "TAB        Soltar o atrapar el mouse",

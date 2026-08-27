@@ -54,6 +54,11 @@ pub struct Player {
     /// Energía para correr. Se gasta corriendo, se recupera caminando o
     /// parado; en 0 ya no se puede correr aunque se tenga Shift apretado.
     pub stamina: f32,
+    /// Si está escondido dentro de un locker (ver `crate::locker`). Mientras
+    /// dure, `process_events` congela cámara y movimiento, y el enemigo no
+    /// puede verlo ni hacerle daño (ver `enemy::can_see_player` y
+    /// `enemy::damage_player_if_close`).
+    pub hidden: bool,
 }
 
 impl Player {
@@ -68,6 +73,7 @@ impl Player {
             running: false,
             footstep_timer: 0,
             stamina: MAX_STAMINA,
+            hidden: false,
         }
     }
 
@@ -162,6 +168,15 @@ pub fn process_events(
     maze: &Maze,
     block_size: usize,
 ) {
+    // Escondido en un locker: ni cámara ni movimiento hasta que salga (ver
+    // `crate::locker`). Sigue recuperando energía, igual que parado.
+    if player.hidden {
+        player.moving = false;
+        player.running = false;
+        player.stamina = apply_stamina(player.stamina, false);
+        return;
+    }
+
     // Sólo cuenta el movimiento del mouse mientras el cursor está capturado
     // (oculto y centrado por raylib vía disable_cursor): si el usuario lo
     // liberó con TAB para hacer otra cosa, moverlo no debería girar la cámara.
