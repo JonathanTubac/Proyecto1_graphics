@@ -41,14 +41,22 @@ impl Maze {
 
     /// Primera celda que contiene `target`, en coordenadas (x, y).
     pub fn find(&self, target: char) -> Option<(usize, usize)> {
+        self.find_all(target).into_iter().next()
+    }
+
+    /// Todas las celdas que contienen `target`, en coordenadas (x, y).
+    /// Se usa para ubicar spawns de sprites (enemigos, items) marcados en
+    /// el propio archivo del laberinto.
+    pub fn find_all(&self, target: char) -> Vec<(usize, usize)> {
+        let mut found = Vec::new();
         for (y, row) in self.cells.iter().enumerate() {
             for (x, &cell) in row.iter().enumerate() {
                 if cell == target {
-                    return Some((x, y));
+                    found.push((x, y));
                 }
             }
         }
-        None
+        found
     }
 
     pub fn player_start(&self) -> Option<(usize, usize)> {

@@ -2,6 +2,7 @@ mod caster;
 mod framebuffer;
 mod maze;
 mod player;
+mod sprites;
 mod textures;
 
 use caster::{cast_ray, draw_ray_path};
@@ -9,6 +10,7 @@ use framebuffer::Framebuffer;
 use maze::{Maze, load_maze};
 use player::{Player, process_events};
 use raylib::prelude::*;
+use sprites::{Sprite, draw_sprites, spawn_from_maze};
 use std::f32::consts::PI;
 use textures::TextureManager;
 
@@ -74,8 +76,23 @@ fn render_player(framebuffer: &mut Framebuffer, player: &Player) {
     );
 }
 
+/// Marca la posición de cada sprite con un puntito, para ubicarlos de un
+/// vistazo en el mapa 2D (no tiene nada que ver con el billboard en 3D).
+fn render_sprite_markers(framebuffer: &mut Framebuffer, sprites: &[Sprite]) {
+    let size = (BLOCK_SIZE as i32 / 3).max(2);
+    for sprite in sprites {
+        draw_block(
+            framebuffer,
+            sprite.pos.x as i32 - size / 2,
+            sprite.pos.y as i32 - size / 2,
+            size,
+            Color::new(220, 60, 60, 255),
+        );
+    }
+}
+
 /// Vista de arriba: el laberinto, el abanico de rayos y el jugador.
-fn render_map2d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
+fn render_map2d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, sprites: &[Sprite]) {
     framebuffer.clear();
     render_maze(framebuffer, maze);
 
@@ -85,14 +102,23 @@ fn render_map2d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
         draw_ray_path(framebuffer, player, a, intersect.distance);
     }
 
-    // El jugador va al final para que el cuadrito quede encima de los rayos.
+    render_sprite_markers(framebuffer, sprites);
+    // El jugador va al final para que el cuadrito quede encima de todo.
     render_player(framebuffer, player);
 }
 
 /// Vista en primera persona: un rayo por columna de pantalla y cada distancia
 /// se convierte en la altura de esa columna de pared, texturizada pixel por
-/// pixel a partir del punto exacto donde el rayo pegó.
-fn render_world3d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, textures: &TextureManager) {
+/// pixel a partir del punto exacto donde el rayo pegó. Al final se dibujan
+/// los sprites encima, usando el z-buffer que se llena de paso para que
+/// queden tapados por las paredes que estén más cerca.
+fn render_world3d(
+    framebuffer: &mut Framebuffer,
+    maze: &Maze,
+    player: &Player,
+    textures: &TextureManager,
+    enemies: &[Sprite],
+) {
     let width = framebuffer.width;
     let height = framebuffer.height;
     let half_height = height as f32 / 2.0;
@@ -105,6 +131,10 @@ fn render_world3d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, t
     let sky = Color::new(25, 25, 45, 255);
     let floor = Color::new(50, 45, 40, 255);
 
+    // Distancia (ya corregida de ojo de pez) de la pared más cercana en cada
+    // columna. Los sprites la usan para saber si quedan tapados.
+    let mut z_buffer = vec![f32::INFINITY; num_rays];
+
     for i in 0..num_rays {
         let a = ray_angle(player, i, num_rays);
         let intersect = cast_ray(maze, player, a, BLOCK_SIZE);
@@ -112,6 +142,7 @@ fn render_world3d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, t
         // Corrección de ojo de pez: la distancia útil es la proyectada sobre
         // la dirección de vista, no la del rayo.
         let d = (intersect.distance * (a - player.a).cos()).max(0.1);
+        z_buffer[i] = d;
         let stake_height = (BLOCK_SIZE as f32 / d) * distance_to_plane;
 
         // Extremos sin recortar: se necesitan completos para calcular ty,
@@ -149,10 +180,12 @@ fn render_world3d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, t
             framebuffer.set_pixel(x, y);
         }
     }
+
+    draw_sprites(framebuffer, player, enemies, textures, &z_buffer);
 }
 
 /// El mismo mapa 2D pero encogido y en la esquina, encima de la vista 3D.
-fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
+fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, sprites: &[Sprite]) {
     let block = ((BLOCK_SIZE as f32) * MINIMAP_SCALE).round().max(2.0) as i32;
     // Factor para pasar de pixeles del mundo a pixeles del minimapa.
     let scale = block as f32 / BLOCK_SIZE as f32;
@@ -197,6 +230,17 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
     }
 
     let dot = (block / 2).max(3);
+
+    framebuffer.set_current_color(Color::new(220, 60, 60, 255));
+    for sprite in sprites {
+        framebuffer.fill_rect(
+            ox + (sprite.pos.x * scale) as i32 - dot / 2,
+            oy + (sprite.pos.y * scale) as i32 - dot / 2,
+            dot,
+            dot,
+        );
+    }
+
     framebuffer.set_current_color(Color::new(255, 220, 0, 255));
     framebuffer.fill_rect(
         ox + (player.pos.x * scale) as i32 - dot / 2,
@@ -213,13 +257,14 @@ fn render(
     mode: Mode,
     show_minimap: bool,
     textures: &TextureManager,
+    sprites: &[Sprite],
 ) {
     match mode {
-        Mode::Map2D => render_map2d(framebuffer, maze, player),
+        Mode::Map2D => render_map2d(framebuffer, maze, player, sprites),
         Mode::World3D => {
-            render_world3d(framebuffer, maze, player, textures);
+            render_world3d(framebuffer, maze, player, textures, sprites);
             if show_minimap {
-                render_minimap(framebuffer, maze, player);
+                render_minimap(framebuffer, maze, player, sprites);
             }
         }
     }
@@ -245,13 +290,15 @@ fn main() {
     let mut framebuffer = Framebuffer::new(width, height);
     framebuffer.set_background_color(Color::new(25, 25, 35, 255));
     let textures = TextureManager::new(&mut window, &thread);
+    let enemies = spawn_from_maze(&maze, BLOCK_SIZE, 'e', 'e');
     let mut mode = Mode::World3D;
     let mut show_minimap = true;
 
     println!(
-        "Jugador en celda {:?}, meta en {:?}, fov {:.2} rad",
+        "Jugador en celda {:?}, meta en {:?}, {} enemigos, fov {:.2} rad",
         (start_x, start_y),
         maze.goal(),
+        enemies.len(),
         player.fov
     );
     println!(
@@ -272,7 +319,7 @@ fn main() {
             show_minimap = !show_minimap;
         }
 
-        render(&mut framebuffer, &maze, &player, mode, show_minimap, &textures);
+        render(&mut framebuffer, &maze, &player, mode, show_minimap, &textures, &enemies);
 
         if window.is_key_pressed(KeyboardKey::KEY_F1) {
             framebuffer.render_to_file("maze.png");

@@ -7,6 +7,17 @@ use std::path::Path;
 /// todavía no tiene textura dedicada).
 const FALLBACK_CHAR: char = '#';
 
+/// Caracteres que son sprites (billboards que miran al jugador) en vez de
+/// texturas de pared: su marcador de posición se genera distinto (con fondo
+/// transparente) y no participan del patrón de ladrillo.
+const SPRITE_CHARS: &[char] = &['e'];
+
+/// Color reservado como "transparente" en las texturas de sprites: cualquier
+/// pixel de ese color se salta al dibujarlo, dejando ver lo que haya detrás
+/// en vez de un cuadro sólido. Es la técnica de color-key que usan los
+/// raycasters clásicos que no manejan canal alpha real.
+pub const TRANSPARENT_COLOR: Color = Color::new(152, 0, 136, 255);
+
 /// Una textura ya decodificada en un buffer de colores en RAM. Se lee una
 /// sola vez al cargar (`Image::get_image_data`) para poder muestrear pixel
 /// por pixel cada frame con un simple acceso a `Vec`, sin volver a llamar a
@@ -44,13 +55,15 @@ pub struct TextureManager {
 
 impl TextureManager {
     pub fn new(rl: &mut RaylibHandle, thread: &RaylibThread) -> Self {
-        // Caracter de pared -> archivo de textura.
+        // Caracter -> archivo de textura (paredes y sprites comparten el
+        // mismo mapa; ver `SPRITE_CHARS` para saber cuáles son cuáles).
         let texture_files = [
             ('+', "assets/wall4.png"),
             ('-', "assets/wall2.png"),
             ('|', "assets/wall1.png"),
             ('g', "assets/wall5.png"),
             (FALLBACK_CHAR, "assets/wall3.png"), // default/fallback
+            ('e', "assets/sprite_enemy.png"),
         ];
 
         // El proyecto puede no traer arte todavía: en vez de que el programa
@@ -129,15 +142,51 @@ fn ensure_placeholder_assets(files: &[(char, &str)]) {
         if let Some(dir) = Path::new(path).parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        generate_placeholder_texture(*ch).export_image(path);
+        let image = if SPRITE_CHARS.contains(ch) {
+            generate_placeholder_sprite(*ch)
+        } else {
+            generate_placeholder_wall(*ch)
+        };
+        image.export_image(path);
         println!("Textura '{ch}' no encontrada: generé un marcador de posición en {path}");
+    }
+}
+
+/// Genera un sprite simple (cuerpo + cabeza) sobre fondo transparente
+/// (color-key), sólo para tener algo visible mientras no se agregue arte
+/// definitivo en `assets/`.
+fn generate_placeholder_sprite(ch: char) -> Image {
+    const SIZE: i32 = 64;
+    let (body, outline) = sprite_palette(ch);
+
+    let mut image = Image::gen_image_color(SIZE, SIZE, TRANSPARENT_COLOR);
+
+    // Cuerpo (más ancho, en la mitad inferior) y cabeza (círculo arriba),
+    // con un borde oscuro para que se distinga del fondo del mundo.
+    image.draw_circle(SIZE / 2, SIZE * 3 / 5, SIZE * 3 / 10, outline);
+    image.draw_circle(SIZE / 2, SIZE * 3 / 5, SIZE * 3 / 10 - 3, body);
+    image.draw_circle(SIZE / 2, SIZE / 3, SIZE / 5, outline);
+    image.draw_circle(SIZE / 2, SIZE / 3, SIZE / 5 - 3, body);
+
+    // Un par de "ojos" para que se note hacia dónde se supone que mira.
+    let eye_y = SIZE / 3;
+    image.draw_circle(SIZE / 2 - 6, eye_y, 3, outline);
+    image.draw_circle(SIZE / 2 + 6, eye_y, 3, outline);
+
+    image
+}
+
+fn sprite_palette(ch: char) -> (Color, Color) {
+    match ch {
+        'e' => (Color::new(200, 60, 60, 255), Color::new(90, 15, 15, 255)), // enemigo: rojo
+        _ => (Color::new(200, 180, 60, 255), Color::new(90, 75, 15, 255)),  // default: amarillo
     }
 }
 
 /// Genera una textura de 64x64 con un patrón de ladrillo simple y un color
 /// distinto por caracter, sólo para tener algo visualmente distinguible
 /// mientras no se agregue arte definitivo en `assets/`.
-fn generate_placeholder_texture(ch: char) -> Image {
+fn generate_placeholder_wall(ch: char) -> Image {
     const SIZE: i32 = 64;
     const ROWS: i32 = 8;
     const ROW_H: i32 = SIZE / ROWS;
