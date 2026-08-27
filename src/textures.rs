@@ -46,6 +46,14 @@ impl TextureData {
         self.pixels[(y * self.width + x) as usize]
     }
 
+    /// Alto en pixeles de la textura fuente. Sirve para que quien dibuja un
+    /// sprite muy agrandado (un enemigo cerca) sepa cuántas filas de
+    /// pantalla comparten el mismo texel, y así no repetir el muestreo y el
+    /// sombreado fila por fila cuando el resultado va a ser idéntico.
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
     /// Muestrea con coordenadas normalizadas (0.0..1.0). Vive en `TextureData`
     /// (no sólo en `TextureManager::sample`) para que quien dibuja muchos
     /// pixeles seguidos de la misma textura (una rebanada de pared, un

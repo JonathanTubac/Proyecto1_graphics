@@ -158,26 +158,39 @@ fn draw_sprite(
     // la misma distancia aproximada.
     let shade = lighting::torch_intensity(distance, angle_diff, half_fov);
 
+    // Cuántas filas de pantalla le tocan a un solo texel cuando el sprite
+    // está agrandado (un enemigo encima del jugador puede llegar a cubrir
+    // media pantalla). Sin esto, un enemigo muy cerca hace que se repita el
+    // mismo muestreo + sombreado en cientos de filas que de todas formas
+    // van a dar exactamente el mismo color: sólo escribirlo de una vez por
+    // bloque, en vez de fila por fila, es lo que evita el bajón de FPS.
+    let row_step = ((sprite_size / tex.height().max(1) as f32).floor() as i32).max(1);
+
     for x in start_x..end_x {
         // 6. z-buffer: si la pared de esta columna está más cerca que el
-        //    sprite, toda la columna queda tapada y ni se muestrea.
+        //    sprite, toda la columna queda tapada y ni se muestrea. Esto se
+        //    revisa por columna (no se puede agrupar en x): la oclusión
+        //    puede cambiar de una columna a la siguiente.
         if distance >= z_buffer[x as usize] {
             continue;
         }
 
         let u = (x as f32 - start_x_f) / sprite_size;
 
-        for y in start_y..end_y {
+        let mut y = start_y;
+        while y < end_y {
             let v = (y as f32 - start_y_f) / sprite_size;
 
             // Mapeo de pixel de pantalla a pixel de textura.
             let color = tex.sample_uv(u, v);
-            if is_transparent(color) {
-                continue;
+            let block_h = row_step.min(end_y - y);
+
+            if !is_transparent(color) {
+                framebuffer.set_current_color(lighting::apply(color, shade));
+                framebuffer.fill_rect(x, y, 1, block_h);
             }
 
-            framebuffer.set_current_color(lighting::apply(color, shade));
-            framebuffer.set_pixel(x, y);
+            y += block_h;
         }
     }
 }
