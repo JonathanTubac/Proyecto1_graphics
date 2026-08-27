@@ -10,7 +10,7 @@ const FALLBACK_CHAR: char = '#';
 /// Caracteres que son sprites (billboards que miran al jugador) en vez de
 /// texturas de pared: su marcador de posición se genera distinto (con fondo
 /// transparente) y no participan del patrón de ladrillo.
-const SPRITE_CHARS: &[char] = &['e'];
+const SPRITE_CHARS: &[char] = &['e', 'g'];
 
 /// Color reservado como "transparente" en las texturas de sprites: cualquier
 /// pixel de ese color se salta al dibujarlo, dejando ver lo que haya detrás
@@ -72,9 +72,10 @@ impl TextureManager {
             ('+', "assets/wall4.png"),
             ('-', "assets/wall2.png"),
             ('|', "assets/wall1.png"),
-            ('g', "assets/wall5.png"),
             (FALLBACK_CHAR, "assets/wall3.png"), // default/fallback
             ('e', "assets/sprite_enemy.png"),
+            ('g', "assets/sprite_door.png"), // meta: puerta de salida
+
         ];
 
         // El proyecto puede no traer arte todavía: en vez de que el programa
@@ -172,28 +173,35 @@ fn ensure_placeholder_assets(files: &[(char, &str)]) {
     }
 }
 
-/// Genera un sprite simple (cuerpo + cabeza) sobre fondo transparente
-/// (color-key), sólo para tener algo visible mientras no se agregue arte
-/// definitivo en `assets/`.
+/// Genera un sprite sobre fondo transparente (color-key), con una forma
+/// distinta según el caracter, sólo para tener algo visible mientras no se
+/// agregue arte definitivo en `assets/`.
 fn generate_placeholder_sprite(ch: char) -> Image {
     const SIZE: i32 = 64;
-    let (body, outline) = sprite_palette(ch);
-
     let mut image = Image::gen_image_color(SIZE, SIZE, TRANSPARENT_COLOR);
 
-    // Cuerpo (más ancho, en la mitad inferior) y cabeza (círculo arriba),
-    // con un borde oscuro para que se distinga del fondo del mundo.
-    image.draw_circle(SIZE / 2, SIZE * 3 / 5, SIZE * 3 / 10, outline);
-    image.draw_circle(SIZE / 2, SIZE * 3 / 5, SIZE * 3 / 10 - 3, body);
-    image.draw_circle(SIZE / 2, SIZE / 3, SIZE / 5, outline);
-    image.draw_circle(SIZE / 2, SIZE / 3, SIZE / 5 - 3, body);
-
-    // Un par de "ojos" para que se note hacia dónde se supone que mira.
-    let eye_y = SIZE / 3;
-    image.draw_circle(SIZE / 2 - 6, eye_y, 3, outline);
-    image.draw_circle(SIZE / 2 + 6, eye_y, 3, outline);
+    match ch {
+        'g' => draw_door_shape(&mut image, SIZE),
+        _ => draw_humanoid_shape(&mut image, SIZE, ch),
+    }
 
     image
+}
+
+/// Cuerpo (más ancho, en la mitad inferior) y cabeza (círculo arriba), con
+/// un borde oscuro para que se distinga del fondo del mundo, y un par de
+/// "ojos" para que se note hacia dónde se supone que mira.
+fn draw_humanoid_shape(image: &mut Image, size: i32, ch: char) {
+    let (body, outline) = sprite_palette(ch);
+
+    image.draw_circle(size / 2, size * 3 / 5, size * 3 / 10, outline);
+    image.draw_circle(size / 2, size * 3 / 5, size * 3 / 10 - 3, body);
+    image.draw_circle(size / 2, size / 3, size / 5, outline);
+    image.draw_circle(size / 2, size / 3, size / 5 - 3, body);
+
+    let eye_y = size / 3;
+    image.draw_circle(size / 2 - 6, eye_y, 3, outline);
+    image.draw_circle(size / 2 + 6, eye_y, 3, outline);
 }
 
 fn sprite_palette(ch: char) -> (Color, Color) {
@@ -201,6 +209,21 @@ fn sprite_palette(ch: char) -> (Color, Color) {
         'e' => (Color::new(200, 60, 60, 255), Color::new(90, 15, 15, 255)), // enemigo: rojo
         _ => (Color::new(200, 180, 60, 255), Color::new(90, 75, 15, 255)),  // default: amarillo
     }
+}
+
+/// Marco de madera con dos paneles hundidos y una perilla, para la puerta
+/// de salida que se planta sobre la celda de meta ('g').
+fn draw_door_shape(image: &mut Image, size: i32) {
+    let frame = Color::new(90, 60, 30, 255);
+    let panel = Color::new(150, 105, 55, 255);
+    let inset = Color::new(170, 125, 70, 255);
+    let knob = Color::new(230, 200, 80, 255);
+
+    image.draw_rectangle(4, 2, size - 8, size - 4, frame);
+    image.draw_rectangle(8, 6, size - 16, size - 12, panel);
+    image.draw_rectangle(14, 10, size - 28, size / 2 - 14, inset);
+    image.draw_rectangle(14, size / 2 + 2, size - 28, size / 2 - 14, inset);
+    image.draw_circle(size - 18, size * 3 / 5, 3, knob);
 }
 
 /// Genera una textura de 64x64 con un patrón de ladrillo simple y un color
@@ -233,7 +256,6 @@ fn brick_palette(ch: char) -> (Color, Color) {
         '+' => (Color::new(150, 95, 70, 255), Color::new(60, 45, 40, 255)), // esquinas: ladrillo rojizo
         '-' => (Color::new(120, 120, 130, 255), Color::new(50, 50, 55, 255)), // horizontales: piedra gris
         '|' => (Color::new(95, 110, 150, 255), Color::new(40, 45, 60, 255)), // verticales: piedra azulada
-        'g' => (Color::new(80, 190, 110, 255), Color::new(30, 90, 55, 255)), // meta: verde
         _ => (Color::new(160, 150, 100, 255), Color::new(70, 60, 40, 255)), // default: arena
     }
 }

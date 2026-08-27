@@ -103,12 +103,20 @@ impl Framebuffer {
         image.export_image(path);
     }
 
-    /// Sube el framebuffer a la textura GPU (ya existente, no una nueva) y
-    /// la dibuja en la ventana.
-    pub fn swap_buffers(&mut self, window: &mut RaylibHandle, thread: &RaylibThread) {
+    /// Sube el framebuffer a la textura GPU ya existente (no crea una nueva
+    /// cada frame). Se hace aparte de `draw` para no depender de que ya haya
+    /// un `RaylibDrawHandle` abierto: la subida no necesita uno.
+    pub fn upload(&mut self) {
         let _ = self.texture.update_texture(&self.pixels);
-        let mut renderer = window.begin_drawing(thread);
-        renderer.draw_texture(&self.texture, 0, 0, Color::WHITE);
+    }
+
+    /// Dibuja la textura ya subida sobre lo que sea que `d` esté pintando.
+    /// Recibe el `RaylibDrawHandle` en vez de abrir su propio
+    /// begin_drawing/end_drawing, para que quien llama pueda seguir
+    /// dibujando encima (p.ej. una pantalla de victoria) antes de que
+    /// termine el frame.
+    pub fn draw(&self, d: &mut RaylibDrawHandle) {
+        d.draw_texture(&self.texture, 0, 0, Color::WHITE);
     }
 
     fn index_of(&self, x: i32, y: i32) -> usize {

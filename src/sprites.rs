@@ -1,5 +1,6 @@
 use crate::framebuffer::Framebuffer;
 use crate::lighting;
+use crate::maze::Maze;
 use crate::player::Player;
 use crate::textures::{TextureManager, TRANSPARENT_COLOR};
 use raylib::prelude::*;
@@ -27,6 +28,23 @@ impl Sprite {
     pub fn new(pos: Vector2, texture: char, size: f32) -> Self {
         Sprite { pos, texture, size }
     }
+}
+
+/// Busca en el laberinto las celdas marcadas con `marker` y crea un sprite
+/// estático (sin IA) centrado en cada una, del tamaño de un bloque. Para
+/// objetos que además se mueven o reaccionan al jugador, ver `crate::enemy`.
+pub fn spawn_from_maze(maze: &Maze, block_size: usize, marker: char, texture: char) -> Vec<Sprite> {
+    let half = block_size as f32 / 2.0;
+    maze.find_all(marker)
+        .into_iter()
+        .map(|(x, y)| {
+            let pos = Vector2::new(
+                x as f32 * block_size as f32 + half,
+                y as f32 * block_size as f32 + half,
+            );
+            Sprite::new(pos, texture, block_size as f32)
+        })
+        .collect()
 }
 
 /// Compara sólo RGB: `Color` no deriva `PartialEq` en raylib-rs, y el canal

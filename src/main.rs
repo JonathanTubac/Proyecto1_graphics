@@ -33,6 +33,13 @@ enum Mode {
     World3D,
 }
 
+/// Si la partida sigue en curso o ya se llegó a la puerta de salida.
+#[derive(Clone, Copy, PartialEq)]
+enum GameState {
+    Playing,
+    Won,
+}
+
 /// Ángulo del rayo `i` de `total`, repartidos dentro del fov del jugador.
 /// El primero sale en a - fov/2 y de ahí avanza una fracción del fov.
 fn ray_angle(player: &Player, i: usize, total: usize) -> f32 {
@@ -259,6 +266,42 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, s
     );
 }
 
+/// Pantalla de victoria: un velo oscuro semitransparente sobre la última
+/// escena renderizada (que queda congelada) más el mensaje centrado. Se
+/// dibuja directo con las primitivas de raylib (no con el framebuffer de
+/// software) porque necesita texto, y nuestro framebuffer no sabe dibujar
+/// texto. `draw_text` no soporta UTF-8, así que el mensaje va sin acentos.
+fn draw_win_screen(d: &mut RaylibDrawHandle, width: i32, height: i32) {
+    d.draw_rectangle(0, 0, width, height, Color::new(0, 0, 0, 180));
+
+    let title = "GANASTE!";
+    let title_size = 64;
+    let title_width = d.measure_text(title, title_size);
+    d.draw_text(
+        title,
+        width / 2 - title_width / 2,
+        height / 2 - title_size,
+        title_size,
+        Color::new(255, 220, 60, 255),
+    );
+
+    let hint = "Llegaste a la puerta de salida. ESC para salir.";
+    let hint_size = 22;
+    let hint_width = d.measure_text(hint, hint_size);
+    d.draw_text(
+        hint,
+        width / 2 - hint_width / 2,
+        height / 2 + 16,
+        hint_size,
+        Color::new(230, 230, 230, 255),
+    );
+}
+
+/// `markers` son los sprites que se marcan como puntitos en el mapa 2D (los
+/// enemigos: sirve para ubicar amenazas de un vistazo); `world` es todo lo
+/// que se dibuja como billboard en la vista 3D (enemigos + la puerta de
+/// meta). Van separados porque la puerta ya se ve como celda verde en el
+/// mapa, así que no necesita también un puntito encima.
 fn render(
     framebuffer: &mut Framebuffer,
     maze: &Maze,
@@ -266,14 +309,15 @@ fn render(
     mode: Mode,
     show_minimap: bool,
     textures: &TextureManager,
-    sprites: &[Sprite],
+    markers: &[Sprite],
+    world: &[Sprite],
 ) {
     match mode {
-        Mode::Map2D => render_map2d(framebuffer, maze, player, sprites),
+        Mode::Map2D => render_map2d(framebuffer, maze, player, markers),
         Mode::World3D => {
-            render_world3d(framebuffer, maze, player, textures, sprites);
+            render_world3d(framebuffer, maze, player, textures, world);
             if show_minimap {
-                render_minimap(framebuffer, maze, player, sprites);
+                render_minimap(framebuffer, maze, player, markers);
             }
         }
     }
@@ -304,8 +348,12 @@ fn main() {
     framebuffer.set_background_color(Color::new(25, 25, 35, 255));
     let textures = TextureManager::new(&mut window, &thread);
     let mut enemies = enemy::spawn_from_maze(&maze, BLOCK_SIZE, 'e', 'e', 0.0);
+    // La puerta de salida es un sprite fijo, no un Enemy: no persigue ni ve,
+    // sólo se planta sobre la celda de meta para poder verla en 3D.
+    let door_sprites = sprites::spawn_from_maze(&maze, BLOCK_SIZE, 'g', 'g');
     let mut mode = Mode::World3D;
     let mut show_minimap = true;
+    let mut game_state = GameState::Playing;
 
     println!(
         "Jugador en celda {:?}, meta en {:?}, {} enemigos, fov {:.2} rad",
@@ -319,7 +367,20 @@ fn main() {
     );
 
     while !window.window_should_close() {
-        process_events(&mut player, &window, &maze, BLOCK_SIZE);
+        if game_state == GameState::Playing {
+            process_events(&mut player, &window, &maze, BLOCK_SIZE);
+            enemy::update_enemies(&mut enemies, &player, &maze, BLOCK_SIZE);
+
+            // Se llegó a la puerta: basta con pisar la celda de meta, sin
+            // necesitar un radio de colisión aparte (es la misma celda 'g'
+            // sobre la que se para el sprite de la puerta).
+            let cell_x = (player.pos.x / BLOCK_SIZE as f32) as usize;
+            let cell_y = (player.pos.y / BLOCK_SIZE as f32) as usize;
+            if maze.get(cell_x, cell_y) == 'g' {
+                game_state = GameState::Won;
+                window.enable_cursor();
+            }
+        }
 
         if window.is_key_pressed(KeyboardKey::KEY_TAB) {
             if window.is_cursor_hidden() {
@@ -339,11 +400,12 @@ fn main() {
             show_minimap = !show_minimap;
         }
 
-        enemy::update_enemies(&mut enemies, &player, &maze, BLOCK_SIZE);
         // El render sólo sabe dibujar Sprites (posición + textura + tamaño),
         // no de IA: cada frame se saca una foto de dónde quedaron los
         // enemigos después de actualizarlos.
         let enemy_sprites: Vec<Sprite> = enemies.iter().map(|e| e.sprite).collect();
+        let mut world_sprites = enemy_sprites.clone();
+        world_sprites.extend_from_slice(&door_sprites);
 
         render(
             &mut framebuffer,
@@ -353,6 +415,7 @@ fn main() {
             show_minimap,
             &textures,
             &enemy_sprites,
+            &world_sprites,
         );
 
         if window.is_key_pressed(KeyboardKey::KEY_F1) {
@@ -363,6 +426,13 @@ fn main() {
             );
         }
 
-        framebuffer.swap_buffers(&mut window, &thread);
+        framebuffer.upload();
+        {
+            let mut d = window.begin_drawing(&thread);
+            framebuffer.draw(&mut d);
+            if game_state == GameState::Won {
+                draw_win_screen(&mut d, width, height);
+            }
+        }
     }
 }
