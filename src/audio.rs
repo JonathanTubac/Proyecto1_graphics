@@ -15,6 +15,7 @@ pub struct Sfx<'aud> {
     pub first_totem_destroyed: Option<Sound<'aud>>,
     pub first_totem_enemy_sound: Option<Sound<'aud>>,
     pub any_totem_destroyed: Option<Sound<'aud>>,
+    pub enemy_scream_any_totem: Option<Sound<'aud>>,
     pub last_totem_destroyed: Option<Sound<'aud>>,
     /// Ambiente mientras no ha despertado el enemigo (antes de romper el
     /// primer tótem).
@@ -34,6 +35,7 @@ impl<'aud> Sfx<'aud> {
             first_totem_destroyed: load_sound(device, "assets/first_totem_destroyed.mp3"),
             first_totem_enemy_sound: load_sound(device, "assets/first_totem_enemy_sound.mp3"),
             any_totem_destroyed: load_sound(device, "assets/any_totem_destroyed.mp3"),
+            enemy_scream_any_totem: load_sound(device, "assets/enemy_scream_any_totem.mp3"),
             last_totem_destroyed: load_sound(device, "assets/last_totem_destroyed.mp3"),
             ambient_calm: load_music(device, "assets/ambient_1.mp3"),
             ambient_tense: load_music(device, "assets/ambient_2.mp3"),
@@ -51,8 +53,13 @@ impl<'aud> Sfx<'aud> {
         play(&self.enemy_footstep);
     }
 
+    /// Se dispara al romper un tótem que no es ni el primero ni el último:
+    /// el estruendo del tótem más el grito del enemigo, superpuestos (igual
+    /// que `play_first_totem_broken`, pero con el grito de "sigo despierto"
+    /// en vez del de "acabo de despertar").
     pub fn play_any_totem_destroyed(&self) {
         play(&self.any_totem_destroyed);
+        play(&self.enemy_scream_any_totem);
     }
 
     pub fn play_last_totem_destroyed(&self) {
