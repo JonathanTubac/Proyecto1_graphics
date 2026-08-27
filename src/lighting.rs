@@ -37,12 +37,24 @@ pub fn torch_intensity(distance: f32, angle_offset: f32, half_fov: f32) -> f32 {
     (AMBIENT + (1.0 - AMBIENT) * falloff * vignette).clamp(AMBIENT, 1.0)
 }
 
-/// Aplica una intensidad de luz (0.0..1.0) a un color, oscureciéndolo.
+/// Color casi negro con un dejo azulado hacia el que se funden las sombras,
+/// en vez de simplemente multiplicar hacia negro puro: un negro neutro se
+/// siente "apagado", mientras que un negro frío se siente más como sombra
+/// real y refuerza el tono opresivo de la ambientación.
+const SHADOW_TINT: Color = Color::new(6, 8, 14, 255);
+
+/// Aplica una intensidad de luz (0.0..1.0) a un color, mezclándolo hacia
+/// `SHADOW_TINT` en vez de hacia negro plano.
 pub fn apply(color: Color, intensity: f32) -> Color {
+    let i = intensity.clamp(0.0, 1.0);
     Color::new(
-        (color.r as f32 * intensity) as u8,
-        (color.g as f32 * intensity) as u8,
-        (color.b as f32 * intensity) as u8,
+        lerp_channel(SHADOW_TINT.r, color.r, i),
+        lerp_channel(SHADOW_TINT.g, color.g, i),
+        lerp_channel(SHADOW_TINT.b, color.b, i),
         color.a,
     )
+}
+
+fn lerp_channel(shadow: u8, lit: u8, t: f32) -> u8 {
+    (shadow as f32 + (lit as f32 - shadow as f32) * t).round() as u8
 }

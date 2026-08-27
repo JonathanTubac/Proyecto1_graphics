@@ -1,3 +1,6 @@
+use rand::Rng;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use raylib::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
@@ -280,9 +283,11 @@ fn draw_door_shape(image: &mut Image, size: i32) {
     image.draw_circle(size - 18, size * 3 / 5, 3, knob);
 }
 
-/// Genera una textura de 64x64 con un patrón de ladrillo simple y un color
-/// distinto por caracter, sólo para tener algo visualmente distinguible
-/// mientras no se agregue arte definitivo en `assets/`.
+/// Genera una textura de 64x64 con un patrón de ladrillo simple, un color
+/// oscuro y desaturado distinto por caracter, y encima mugre/grietas/
+/// churretes para que se sienta una pared vieja y húmeda en vez de un
+/// ladrillo limpio de catálogo. Sólo para tener algo visualmente
+/// distinguible mientras no se agregue arte definitivo en `assets/`.
 fn generate_placeholder_wall(ch: char) -> Image {
     const SIZE: i32 = 64;
     const ROWS: i32 = 8;
@@ -302,14 +307,65 @@ fn generate_placeholder_wall(ch: char) -> Image {
         }
     }
 
+    grime_and_decay(&mut image, ch, SIZE);
+
     image
+}
+
+/// Ensucia una textura de pared ya generada: manchas de humedad/musgo,
+/// churretes verticales (agua u óxido escurriendo) y grietas quebradas. La
+/// semilla depende del caracter, así que cada tipo de pared tiene siempre
+/// el mismo patrón de mugre entre corridas, en vez de cambiar cada vez que
+/// se regenera el marcador de posición.
+fn grime_and_decay(image: &mut Image, ch: char, size: i32) {
+    let mut rng = StdRng::seed_from_u64(ch as u64);
+
+    let grime = Color::new(14, 17, 13, 255);
+    let stain = Color::new(18, 12, 10, 255);
+    let crack = Color::new(8, 7, 7, 255);
+
+    // Manchas de musgo/humedad: racimos de círculos chicos e irregulares.
+    for _ in 0..7 {
+        let cx = rng.gen_range(0..size);
+        let cy = rng.gen_range(0..size);
+        let blobs = rng.gen_range(3..6);
+        for _ in 0..blobs {
+            let ox = (cx + rng.gen_range(-6..6)).clamp(0, size - 1);
+            let oy = (cy + rng.gen_range(-6..6)).clamp(0, size - 1);
+            let r = rng.gen_range(2..5);
+            image.draw_circle(ox, oy, r, grime);
+        }
+    }
+
+    // Churretes verticales, de arriba hacia abajo, como si algo hubiera
+    // escurrido por la pared.
+    for _ in 0..3 {
+        let x = rng.gen_range(4..size - 4);
+        let start_y = rng.gen_range(0..size / 3);
+        let end_y = rng.gen_range(size / 2..size);
+        let drift = rng.gen_range(-2..2);
+        image.draw_line(x, start_y, x + drift, end_y, stain);
+    }
+
+    // Grietas: líneas quebradas cortas, en 3-4 segmentos.
+    for _ in 0..4 {
+        let mut x = rng.gen_range(0..size);
+        let mut y = rng.gen_range(0..size);
+        for _ in 0..3 {
+            let nx = (x + rng.gen_range(-8..8)).clamp(0, size - 1);
+            let ny = (y + rng.gen_range(-8..8)).clamp(0, size - 1);
+            image.draw_line(x, y, nx, ny, crack);
+            x = nx;
+            y = ny;
+        }
+    }
 }
 
 fn brick_palette(ch: char) -> (Color, Color) {
     match ch {
-        '+' => (Color::new(150, 95, 70, 255), Color::new(60, 45, 40, 255)), // esquinas: ladrillo rojizo
-        '-' => (Color::new(120, 120, 130, 255), Color::new(50, 50, 55, 255)), // horizontales: piedra gris
-        '|' => (Color::new(95, 110, 150, 255), Color::new(40, 45, 60, 255)), // verticales: piedra azulada
-        _ => (Color::new(160, 150, 100, 255), Color::new(70, 60, 40, 255)), // default: arena
+        '+' => (Color::new(75, 55, 48, 255), Color::new(30, 24, 22, 255)), // esquinas: ladrillo húmedo
+        '-' => (Color::new(55, 58, 56, 255), Color::new(22, 24, 23, 255)), // horizontales: piedra sucia
+        '|' => (Color::new(48, 58, 60, 255), Color::new(18, 24, 25, 255)), // verticales: piedra fría
+        _ => (Color::new(70, 62, 48, 255), Color::new(28, 24, 18, 255)),  // default: tierra/arena vieja
     }
 }

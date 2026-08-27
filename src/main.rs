@@ -26,6 +26,17 @@ const MINIMAP_SCALE: f32 = 0.22;
 /// Separación del minimapa respecto a la esquina de la pantalla.
 const MINIMAP_MARGIN: i32 = 12;
 
+/// Colores del mapa 2D y el minimapa. Apagados a propósito: aunque el mapa
+/// es una vista de utilidad (no rompe la inmersión con colores alegres),
+/// sigue siendo legible.
+const MAP_WALL_COLOR: Color = Color::new(70, 65, 90, 255);
+const MAP_GOAL_COLOR: Color = Color::new(45, 110, 75, 255);
+/// Cielo/vacío por encima de las paredes en la vista 3D: casi negro, apenas
+/// con un dejo de color para no ser un negro plano.
+const SKY_COLOR: Color = Color::new(9, 8, 13, 255);
+/// Piso: tierra oscura y húmeda, no un marrón cálido de catálogo.
+const FLOOR_COLOR: Color = Color::new(24, 21, 19, 255);
+
 /// Vista activa: el mapa desde arriba o la proyección desde los ojos del jugador.
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
@@ -57,8 +68,6 @@ fn draw_block(framebuffer: &mut Framebuffer, x0: i32, y0: i32, size: i32, color:
 
 /// Dibuja el laberinto completo: cada caracter del archivo es una celda.
 fn render_maze(framebuffer: &mut Framebuffer, maze: &Maze) {
-    let wall_color = Color::new(80, 110, 200, 255);
-    let goal_color = Color::new(60, 200, 100, 255);
     let block = BLOCK_SIZE as i32;
 
     for y in 0..maze.height() {
@@ -67,9 +76,9 @@ fn render_maze(framebuffer: &mut Framebuffer, maze: &Maze) {
             let y0 = y as i32 * block;
 
             if maze.is_wall(x, y) {
-                draw_block(framebuffer, x0, y0, block, wall_color);
+                draw_block(framebuffer, x0, y0, block, MAP_WALL_COLOR);
             } else if maze.get(x, y) == 'g' {
-                draw_block(framebuffer, x0, y0, block, goal_color);
+                draw_block(framebuffer, x0, y0, block, MAP_GOAL_COLOR);
             }
         }
     }
@@ -140,9 +149,6 @@ fn render_world3d(
     // distancia ocupa justo el alto de la pantalla.
     let distance_to_plane = (width as f32 / 2.0) / half_fov.tan();
 
-    let sky = Color::new(25, 25, 45, 255);
-    let floor = Color::new(50, 45, 40, 255);
-
     // Distancia (ya corregida de ojo de pez) de la pared más cercana en cada
     // columna. Los sprites la usan para saber si quedan tapados.
     let mut z_buffer = vec![f32::INFINITY; num_rays];
@@ -165,9 +171,9 @@ fn render_world3d(
         let top = (top_f as i32).clamp(0, height);
         let bottom = (bottom_f as i32).clamp(0, height);
 
-        framebuffer.set_current_color(sky);
+        framebuffer.set_current_color(SKY_COLOR);
         framebuffer.fill_rect(x, 0, 1, top);
-        framebuffer.set_current_color(floor);
+        framebuffer.set_current_color(FLOOR_COLOR);
         framebuffer.fill_rect(x, bottom, 1, height - bottom);
 
         if intersect.impact == ' ' {
@@ -219,9 +225,9 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, s
     for y in 0..maze.height() {
         for x in 0..maze.width() {
             let color = if maze.is_wall(x, y) {
-                Color::new(80, 110, 200, 255)
+                MAP_WALL_COLOR
             } else if maze.get(x, y) == 'g' {
-                Color::new(60, 200, 100, 255)
+                MAP_GOAL_COLOR
             } else {
                 continue;
             };
@@ -391,7 +397,7 @@ fn main() {
     window.disable_cursor();
 
     let mut framebuffer = Framebuffer::new(&mut window, &thread, width, height);
-    framebuffer.set_background_color(Color::new(25, 25, 35, 255));
+    framebuffer.set_background_color(Color::new(10, 9, 13, 255));
     let textures = TextureManager::new(&mut window, &thread);
     let mut enemies = enemy::spawn_from_maze(&maze, BLOCK_SIZE, 'e', 'e', 0.0);
     // La puerta de salida es un sprite fijo, no un Enemy: no persigue ni ve,
