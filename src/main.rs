@@ -162,6 +162,13 @@ fn render_world3d(
             continue; // El rayo se salió del mapa: no hay pared que texturizar.
         }
 
+        // Se resuelve la textura de esta columna una sola vez: todos sus
+        // pixeles son del mismo caracter de pared, así que repetir el
+        // lookup en el HashMap por cada uno sería puro desperdicio.
+        let Some(tex) = textures.resolve(intersect.impact) else {
+            continue;
+        };
+
         // Las paredes lejanas se oscurecen y, entre dos paredes a la misma
         // distancia, la que se vio de canto (north/south) se oscurece un
         // poco más que la de frente (east/west): así se distinguen las
@@ -170,7 +177,7 @@ fn render_world3d(
 
         for y in top..bottom {
             let ty = ((y as f32 - top_f) / stake_height).clamp(0.0, 1.0);
-            let texel = textures.sample(intersect.impact, intersect.wall_x, ty);
+            let texel = tex.sample_uv(intersect.wall_x, ty);
             framebuffer.set_current_color(Color::new(
                 (texel.r as f32 * shade) as u8,
                 (texel.g as f32 * shade) as u8,
@@ -287,7 +294,7 @@ fn main() {
         .build();
     window.set_target_fps(60);
 
-    let mut framebuffer = Framebuffer::new(width, height);
+    let mut framebuffer = Framebuffer::new(&mut window, &thread, width, height);
     framebuffer.set_background_color(Color::new(25, 25, 35, 255));
     let textures = TextureManager::new(&mut window, &thread);
     let enemies = spawn_from_maze(&maze, BLOCK_SIZE, 'e', 'e');

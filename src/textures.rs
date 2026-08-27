@@ -22,7 +22,7 @@ pub const TRANSPARENT_COLOR: Color = Color::new(152, 0, 136, 255);
 /// sola vez al cargar (`Image::get_image_data`) para poder muestrear pixel
 /// por pixel cada frame con un simple acceso a `Vec`, sin volver a llamar a
 /// raylib ni tocar punteros crudos por cada pixel dibujado.
-struct TextureData {
+pub struct TextureData {
     pixels: Vec<Color>,
     width: u32,
     height: u32,
@@ -41,6 +41,17 @@ impl TextureData {
         let x = tx.min(self.width - 1);
         let y = ty.min(self.height - 1);
         self.pixels[(y * self.width + x) as usize]
+    }
+
+    /// Muestrea con coordenadas normalizadas (0.0..1.0). Vive en `TextureData`
+    /// (no sólo en `TextureManager::sample`) para que quien dibuja muchos
+    /// pixeles seguidos de la misma textura (una rebanada de pared, un
+    /// sprite) pueda resolverla una sola vez con `TextureManager::resolve` y
+    /// evitar el lookup del `HashMap` en cada pixel.
+    pub fn sample_uv(&self, u: f32, v: f32) -> Color {
+        let tx = (u.clamp(0.0, 1.0) * (self.width - 1) as f32).round() as u32;
+        let ty = (v.clamp(0.0, 1.0) * (self.height - 1) as f32).round() as u32;
+        self.sample(tx, ty)
     }
 }
 
@@ -111,15 +122,24 @@ impl TextureManager {
     /// 0.0..1.0 (la fracción a lo largo de la pared y de la rebanada
     /// vertical), que es justo lo que produce el raycaster. Evita que cada
     /// llamador tenga que conocer el ancho/alto en pixeles de la textura.
+    ///
+    /// Para dibujar muchos pixeles seguidos de la misma textura (toda una
+    /// rebanada de pared, todo un sprite) es mejor usar `resolve` una vez y
+    /// llamar `sample_uv` sobre el resultado: así el lookup en el `HashMap`
+    /// no se repite en cada pixel.
+    #[allow(dead_code)]
     pub fn sample(&self, ch: char, u: f32, v: f32) -> Color {
         match self.texture_for(ch) {
-            Some(tex) => {
-                let tx = (u.clamp(0.0, 1.0) * (tex.width - 1) as f32).round() as u32;
-                let ty = (v.clamp(0.0, 1.0) * (tex.height - 1) as f32).round() as u32;
-                tex.sample(tx, ty)
-            }
+            Some(tex) => tex.sample_uv(u, v),
             None => Color::WHITE,
         }
+    }
+
+    /// Resuelve una sola vez la textura de `ch` (con su fallback a `'#'`
+    /// incluido), para muestrear muchos pixeles con `TextureData::sample_uv`
+    /// sin repetir la búsqueda en el `HashMap` por cada uno.
+    pub fn resolve(&self, ch: char) -> Option<&TextureData> {
+        self.texture_for(ch)
     }
 
     #[allow(dead_code)]

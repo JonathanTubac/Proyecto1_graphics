@@ -138,6 +138,12 @@ fn draw_sprite(
         return; // completamente fuera de pantalla
     }
 
+    // Se resuelve la textura una sola vez para todo el sprite, en vez de
+    // repetir el lookup en el HashMap por cada uno de sus pixeles.
+    let Some(tex) = textures.resolve(sprite.texture) else {
+        return;
+    };
+
     for x in start_x..end_x {
         // 6. z-buffer: si la pared de esta columna está más cerca que el
         //    sprite, toda la columna queda tapada y ni se muestrea.
@@ -151,7 +157,7 @@ fn draw_sprite(
             let v = (y as f32 - start_y_f) / sprite_size;
 
             // Mapeo de pixel de pantalla a pixel de textura.
-            let color = textures.sample(sprite.texture, u, v);
+            let color = tex.sample_uv(u, v);
             if is_transparent(color) {
                 continue;
             }

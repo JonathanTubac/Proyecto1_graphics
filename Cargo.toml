@@ -6,6 +6,15 @@ edition = "2024"
 [profile.dev]
 
 debug = false
+# El raycaster escribe cada pixel de la pantalla en Rust puro (sin llamadas a
+# C por pixel), así que sin optimizar ese trabajo por-pixel se siente incluso
+# en builds de desarrollo. `opt-level = 3` deja los loops calientes a buena
+# velocidad; `overflow-checks`/`debug-assertions` van apagados porque son
+# aritmética de enteros chequeada en cada operación (justo lo que más se
+# repite por pixel) y este proyecto no depende de `debug_assert!`.
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
 
 [dependencies]
 raylib = "5.0"
