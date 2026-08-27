@@ -18,3 +18,4 @@ debug-assertions = false
 
 [dependencies]
 raylib = "5.0"
+rand = "0.8"
