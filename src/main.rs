@@ -2,13 +2,15 @@ mod caster;
 mod framebuffer;
 mod maze;
 mod player;
+mod textures;
 
-use caster::cast_ray;
+use caster::{cast_ray, draw_ray_path};
 use framebuffer::Framebuffer;
 use maze::{Maze, load_maze};
 use player::{Player, process_events};
 use raylib::prelude::*;
 use std::f32::consts::PI;
+use textures::TextureManager;
 
 const BLOCK_SIZE: usize = 40;
 /// Rayos del abanico en la vista 2D. En 3D se lanza uno por columna.
@@ -79,7 +81,8 @@ fn render_map2d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
 
     for i in 0..NUM_RAYS_2D {
         let a = ray_angle(player, i, NUM_RAYS_2D);
-        cast_ray(framebuffer, maze, player, a, BLOCK_SIZE, true);
+        let intersect = cast_ray(maze, player, a, BLOCK_SIZE);
+        draw_ray_path(framebuffer, player, a, intersect.distance);
     }
 
     // El jugador va al final para que el cuadrito quede encima de los rayos.
@@ -87,8 +90,9 @@ fn render_map2d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
 }
 
 /// Vista en primera persona: un rayo por columna de pantalla y cada distancia
-/// se convierte en la altura de esa columna de pared.
-fn render_world3d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
+/// se convierte en la altura de esa columna de pared, texturizada pixel por
+/// pixel a partir del punto exacto donde el rayo pegó.
+fn render_world3d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, textures: &TextureManager) {
     let width = framebuffer.width;
     let height = framebuffer.height;
     let half_height = height as f32 / 2.0;
@@ -103,41 +107,47 @@ fn render_world3d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
 
     for i in 0..num_rays {
         let a = ray_angle(player, i, num_rays);
-        let intersect = cast_ray(framebuffer, maze, player, a, BLOCK_SIZE, false);
+        let intersect = cast_ray(maze, player, a, BLOCK_SIZE);
 
         // Corrección de ojo de pez: la distancia útil es la proyectada sobre
         // la dirección de vista, no la del rayo.
         let d = (intersect.distance * (a - player.a).cos()).max(0.1);
         let stake_height = (BLOCK_SIZE as f32 / d) * distance_to_plane;
 
-        let top = (half_height - stake_height / 2.0) as i32;
-        let bottom = (half_height + stake_height / 2.0) as i32;
-
-        // Las paredes lejanas se oscurecen para dar sensación de profundidad.
-        let shade = (1.0 - (d / 600.0)).clamp(0.25, 1.0);
-        let base = match intersect.impact {
-            'g' => Color::new(60, 200, 100, 255),
-            '|' => Color::new(70, 95, 175, 255), // verticales un poco más oscuras
-            _ => Color::new(95, 125, 215, 255),
-        };
-        let wall = Color::new(
-            (base.r as f32 * shade) as u8,
-            (base.g as f32 * shade) as u8,
-            (base.b as f32 * shade) as u8,
-            255,
-        );
-
-        // Tres tramos por columna: cielo, pared y piso.
+        // Extremos sin recortar: se necesitan completos para calcular ty,
+        // aunque la mitad de la rebanada quede fuera de pantalla.
+        let top_f = half_height - stake_height / 2.0;
+        let bottom_f = half_height + stake_height / 2.0;
         let x = i as i32;
-        let top = top.clamp(0, height);
-        let bottom = bottom.clamp(0, height);
+        let top = (top_f as i32).clamp(0, height);
+        let bottom = (bottom_f as i32).clamp(0, height);
 
         framebuffer.set_current_color(sky);
         framebuffer.fill_rect(x, 0, 1, top);
-        framebuffer.set_current_color(wall);
-        framebuffer.fill_rect(x, top, 1, bottom - top);
         framebuffer.set_current_color(floor);
         framebuffer.fill_rect(x, bottom, 1, height - bottom);
+
+        if intersect.impact == ' ' {
+            continue; // El rayo se salió del mapa: no hay pared que texturizar.
+        }
+
+        // Las paredes lejanas se oscurecen y, entre dos paredes a la misma
+        // distancia, la que se vio de canto (north/south) se oscurece un
+        // poco más que la de frente (east/west): así se distinguen las
+        // esquinas del laberinto aunque compartan textura.
+        let shade = (1.0 - (d / 600.0)).clamp(0.25, 1.0) * if intersect.side { 0.75 } else { 1.0 };
+
+        for y in top..bottom {
+            let ty = ((y as f32 - top_f) / stake_height).clamp(0.0, 1.0);
+            let texel = textures.sample(intersect.impact, intersect.wall_x, ty);
+            framebuffer.set_current_color(Color::new(
+                (texel.r as f32 * shade) as u8,
+                (texel.g as f32 * shade) as u8,
+                (texel.b as f32 * shade) as u8,
+                255,
+            ));
+            framebuffer.set_pixel(x, y);
+        }
     }
 }
 
@@ -173,7 +183,7 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
     // por eso aquí cast_ray va con draw_line en false.
     for i in 0..NUM_RAYS_MINIMAP {
         let a = ray_angle(player, i, NUM_RAYS_MINIMAP);
-        let hit = cast_ray(framebuffer, maze, player, a, BLOCK_SIZE, false);
+        let hit = cast_ray(maze, player, a, BLOCK_SIZE);
 
         framebuffer.set_current_color(Color::new(230, 230, 240, 255));
         let (cos, sin) = (a.cos(), a.sin());
@@ -202,11 +212,12 @@ fn render(
     player: &Player,
     mode: Mode,
     show_minimap: bool,
+    textures: &TextureManager,
 ) {
     match mode {
         Mode::Map2D => render_map2d(framebuffer, maze, player),
         Mode::World3D => {
-            render_world3d(framebuffer, maze, player);
+            render_world3d(framebuffer, maze, player, textures);
             if show_minimap {
                 render_minimap(framebuffer, maze, player);
             }
@@ -233,6 +244,7 @@ fn main() {
 
     let mut framebuffer = Framebuffer::new(width, height);
     framebuffer.set_background_color(Color::new(25, 25, 35, 255));
+    let textures = TextureManager::new(&mut window, &thread);
     let mut mode = Mode::World3D;
     let mut show_minimap = true;
 
@@ -260,7 +272,7 @@ fn main() {
             show_minimap = !show_minimap;
         }
 
-        render(&mut framebuffer, &maze, &player, mode, show_minimap);
+        render(&mut framebuffer, &maze, &player, mode, show_minimap, &textures);
 
         if window.is_key_pressed(KeyboardKey::KEY_F1) {
             framebuffer.render_to_file("maze.png");
