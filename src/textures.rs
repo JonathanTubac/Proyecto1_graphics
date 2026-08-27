@@ -13,7 +13,7 @@ const FALLBACK_CHAR: char = '#';
 /// Caracteres que son sprites (billboards que miran al jugador) en vez de
 /// texturas de pared: su marcador de posición se genera distinto (con fondo
 /// transparente) y no participan del patrón de ladrillo.
-const SPRITE_CHARS: &[char] = &['e', 'g'];
+const SPRITE_CHARS: &[char] = &['e', 'g', 't'];
 
 /// Color reservado como "transparente" en las texturas de sprites: cualquier
 /// pixel de ese color se salta al dibujarlo, dejando ver lo que haya detrás
@@ -86,7 +86,7 @@ impl TextureManager {
             (FALLBACK_CHAR, "assets/wall3.png"), // default/fallback
             ('e', "assets/sprite_enemy.png"),
             ('g', "assets/sprite_door.png"), // meta: puerta de salida
-
+            ('t', "assets/sprite_totem.png"), // tótem que hay que destruir
         ];
 
         // El proyecto puede no traer arte todavía: en vez de que el programa
@@ -193,6 +193,7 @@ fn generate_placeholder_sprite(ch: char) -> Image {
 
     match ch {
         'g' => draw_door_shape(&mut image, SIZE),
+        't' => draw_totem_shape(&mut image, SIZE),
         _ => draw_humanoid_shape(&mut image, SIZE, ch),
     }
 
@@ -289,6 +290,53 @@ fn draw_door_shape(image: &mut Image, size: i32) {
     image.draw_rectangle(14, 10, size - 28, size / 2 - 14, inset);
     image.draw_rectangle(14, size / 2 + 2, size - 28, size / 2 - 14, inset);
     image.draw_circle(size - 18, size * 3 / 5, 3, knob);
+}
+
+/// Ídolo de piedra tallado en bloques apilados (cada uno más angosto hacia
+/// arriba), con grietas y una runa que brilla en morado en el bloque de en
+/// medio: lo único con color en toda la figura, para que se note que tiene
+/// algo maligno adentro. Es lo que el jugador tiene que destruir.
+fn draw_totem_shape(image: &mut Image, size: i32) {
+    let stone = Color::new(58, 52, 50, 255);
+    let stone_dark = Color::new(28, 25, 24, 255);
+    let rune_glow = Color::new(150, 20, 190, 255);
+    let rune_core = Color::new(230, 190, 255, 255);
+
+    let w = size as f32;
+
+    // Base ancha, cabeza angosta: cuatro bloques apilados, como un tótem
+    // tallado en piezas.
+    let blocks = [
+        (0.08, 0.72, 0.92, 0.98),
+        (0.16, 0.46, 0.84, 0.74),
+        (0.24, 0.20, 0.76, 0.48),
+        (0.32, 0.02, 0.68, 0.22),
+    ];
+    for (x0, y0, x1, y1) in blocks {
+        image.draw_rectangle(
+            (w * x0) as i32,
+            (w * y0) as i32,
+            (w * (x1 - x0)) as i32,
+            (w * (y1 - y0)) as i32,
+            stone,
+        );
+    }
+
+    // Línea divisoria entre cada bloque, para que se note tallado en piezas
+    // y no una sola columna lisa.
+    for &(_, y0, _, _) in blocks.iter().skip(1) {
+        image.draw_line(6, (w * y0) as i32, size - 6, (w * y0) as i32, stone_dark);
+    }
+
+    // Un par de grietas.
+    image.draw_line((w * 0.30) as i32, (w * 0.50) as i32, (w * 0.36) as i32, (w * 0.70) as i32, stone_dark);
+    image.draw_line((w * 0.66) as i32, (w * 0.28) as i32, (w * 0.60) as i32, (w * 0.44) as i32, stone_dark);
+
+    // La runa: el único rasgo con color en toda la figura.
+    let cx = (w * 0.5) as i32;
+    let cy = (w * 0.34) as i32;
+    image.draw_circle(cx, cy, (w * 0.07) as i32, rune_glow);
+    image.draw_circle(cx, cy, (w * 0.03) as i32, rune_core);
 }
 
 /// Genera una textura de 64x64 con un patrón de ladrillo simple, un color

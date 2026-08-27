@@ -6,6 +6,7 @@ mod maze;
 mod player;
 mod sprites;
 mod textures;
+mod totem;
 
 use caster::{cast_ray, draw_ray_path};
 use framebuffer::Framebuffer;
@@ -36,6 +37,10 @@ const MAP_GOAL_COLOR: Color = Color::new(45, 110, 75, 255);
 const SKY_COLOR: Color = Color::new(9, 8, 13, 255);
 /// Piso: tierra oscura y húmeda, no un marrón cálido de catálogo.
 const FLOOR_COLOR: Color = Color::new(24, 21, 19, 255);
+/// Colores de los puntitos en el mapa 2D/minimapa, para distinguir de un
+/// vistazo amenazas (enemigos) de objetivos (tótems).
+const ENEMY_MARKER_COLOR: Color = Color::new(220, 60, 60, 255);
+const TOTEM_MARKER_COLOR: Color = Color::new(170, 70, 210, 255);
 
 /// Vista activa: el mapa desde arriba o la proyección desde los ojos del jugador.
 #[derive(Clone, Copy, PartialEq)]
@@ -96,9 +101,11 @@ fn render_player(framebuffer: &mut Framebuffer, player: &Player) {
     );
 }
 
-/// Marca la posición de cada sprite con un puntito, para ubicarlos de un
-/// vistazo en el mapa 2D (no tiene nada que ver con el billboard en 3D).
-fn render_sprite_markers(framebuffer: &mut Framebuffer, sprites: &[Sprite]) {
+/// Marca la posición de cada sprite con un puntito de `color`, para
+/// ubicarlos de un vistazo en el mapa 2D (no tiene nada que ver con el
+/// billboard en 3D). El color lo elige quien llama para poder distinguir,
+/// p.ej., enemigos de tótems.
+fn render_sprite_markers(framebuffer: &mut Framebuffer, sprites: &[Sprite], color: Color) {
     let size = (BLOCK_SIZE as i32 / 3).max(2);
     for sprite in sprites {
         draw_block(
@@ -106,13 +113,19 @@ fn render_sprite_markers(framebuffer: &mut Framebuffer, sprites: &[Sprite]) {
             sprite.pos.x as i32 - size / 2,
             sprite.pos.y as i32 - size / 2,
             size,
-            Color::new(220, 60, 60, 255),
+            color,
         );
     }
 }
 
 /// Vista de arriba: el laberinto, el abanico de rayos y el jugador.
-fn render_map2d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, sprites: &[Sprite]) {
+fn render_map2d(
+    framebuffer: &mut Framebuffer,
+    maze: &Maze,
+    player: &Player,
+    enemies: &[Sprite],
+    totems: &[Sprite],
+) {
     framebuffer.clear();
     render_maze(framebuffer, maze);
 
@@ -122,7 +135,8 @@ fn render_map2d(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, spr
         draw_ray_path(framebuffer, player, a, intersect.distance);
     }
 
-    render_sprite_markers(framebuffer, sprites);
+    render_sprite_markers(framebuffer, enemies, ENEMY_MARKER_COLOR);
+    render_sprite_markers(framebuffer, totems, TOTEM_MARKER_COLOR);
     // El jugador va al final para que el cuadrito quede encima de todo.
     render_player(framebuffer, player);
 }
@@ -209,7 +223,13 @@ fn render_world3d(
 }
 
 /// El mismo mapa 2D pero encogido y en la esquina, encima de la vista 3D.
-fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, sprites: &[Sprite]) {
+fn render_minimap(
+    framebuffer: &mut Framebuffer,
+    maze: &Maze,
+    player: &Player,
+    enemies: &[Sprite],
+    totems: &[Sprite],
+) {
     let block = ((BLOCK_SIZE as f32) * MINIMAP_SCALE).round().max(2.0) as i32;
     // Factor para pasar de pixeles del mundo a pixeles del minimapa.
     let scale = block as f32 / BLOCK_SIZE as f32;
@@ -255,8 +275,18 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, s
 
     let dot = (block / 2).max(3);
 
-    framebuffer.set_current_color(Color::new(220, 60, 60, 255));
-    for sprite in sprites {
+    framebuffer.set_current_color(ENEMY_MARKER_COLOR);
+    for sprite in enemies {
+        framebuffer.fill_rect(
+            ox + (sprite.pos.x * scale) as i32 - dot / 2,
+            oy + (sprite.pos.y * scale) as i32 - dot / 2,
+            dot,
+            dot,
+        );
+    }
+
+    framebuffer.set_current_color(TOTEM_MARKER_COLOR);
+    for sprite in totems {
         framebuffer.fill_rect(
             ox + (sprite.pos.x * scale) as i32 - dot / 2,
             oy + (sprite.pos.y * scale) as i32 - dot / 2,
@@ -349,11 +379,37 @@ fn draw_hearts_hud(d: &mut RaylibDrawHandle, width: i32, lives: u32, max_lives: 
     }
 }
 
-/// `markers` son los sprites que se marcan como puntitos en el mapa 2D (los
-/// enemigos: sirve para ubicar amenazas de un vistazo); `world` es todo lo
-/// que se dibuja como billboard en la vista 3D (enemigos + la puerta de
-/// meta). Van separados porque la puerta ya se ve como celda verde en el
-/// mapa, así que no necesita también un puntito encima.
+/// Contador de tótems destruidos, justo debajo de los corazones.
+fn draw_totem_counter(d: &mut RaylibDrawHandle, width: i32, destroyed: usize, total: usize) {
+    let text = format!("Totems: {destroyed}/{total}");
+    let size = 20;
+    let text_width = d.measure_text(&text, size);
+    d.draw_text(&text, width - 16 - text_width, 16 + 26 + 8, size, Color::new(200, 160, 230, 255));
+}
+
+/// Pista de "puedes interactuar" cuando el jugador está junto a un tótem
+/// sin destruir todavía.
+fn draw_interact_hint(d: &mut RaylibDrawHandle, width: i32, height: i32) {
+    let text = "[E] Destruir totem";
+    let size = 22;
+    let text_width = d.measure_text(text, size);
+    d.draw_text(text, width / 2 - text_width / 2, height - 60, size, Color::new(230, 230, 230, 255));
+}
+
+/// Pista al pisar la meta sin haber destruido todos los tótems: la puerta
+/// no se abre todavía.
+fn draw_locked_door_hint(d: &mut RaylibDrawHandle, width: i32, remaining: usize) {
+    let text = format!("La puerta esta sellada. Faltan {remaining} totem(s).");
+    let size = 22;
+    let text_width = d.measure_text(&text, size);
+    d.draw_text(&text, width / 2 - text_width / 2, 60, size, Color::new(230, 120, 120, 255));
+}
+
+/// `enemy_markers`/`totem_markers` son los sprites que se marcan como
+/// puntitos en el mapa 2D (para ubicar amenazas y objetivos de un vistazo);
+/// `world` es todo lo que se dibuja como billboard en la vista 3D (enemigos
+/// + puerta de meta + tótems sin destruir). La puerta no lleva marcador
+/// propio: ya se ve como celda verde en el mapa.
 fn render(
     framebuffer: &mut Framebuffer,
     maze: &Maze,
@@ -361,15 +417,16 @@ fn render(
     mode: Mode,
     show_minimap: bool,
     textures: &TextureManager,
-    markers: &[Sprite],
+    enemy_markers: &[Sprite],
+    totem_markers: &[Sprite],
     world: &[Sprite],
 ) {
     match mode {
-        Mode::Map2D => render_map2d(framebuffer, maze, player, markers),
+        Mode::Map2D => render_map2d(framebuffer, maze, player, enemy_markers, totem_markers),
         Mode::World3D => {
             render_world3d(framebuffer, maze, player, textures, world);
             if show_minimap {
-                render_minimap(framebuffer, maze, player, markers);
+                render_minimap(framebuffer, maze, player, enemy_markers, totem_markers);
             }
         }
     }
@@ -403,34 +460,53 @@ fn main() {
     // La puerta de salida es un sprite fijo, no un Enemy: no persigue ni ve,
     // sólo se planta sobre la celda de meta para poder verla en 3D.
     let door_sprites = sprites::spawn_from_maze(&maze, BLOCK_SIZE, 'g', 'g');
+    let mut totems = totem::spawn_from_maze(&maze, BLOCK_SIZE, 't');
     let mut mode = Mode::World3D;
     let mut show_minimap = true;
     let mut game_state = GameState::Playing;
 
     println!(
-        "Jugador en celda {:?}, meta en {:?}, {} enemigos, fov {:.2} rad",
+        "Jugador en celda {:?}, meta en {:?}, {} enemigos, {} totems, fov {:.2} rad",
         (start_x, start_y),
         maze.goal(),
         enemies.len(),
+        totems.len(),
         player.fov
     );
     println!(
-        "W/S: avanzar | A/D: strafe | mouse: girar | M: mapa completo | N: minimapa | TAB: soltar el mouse | F1: guardar maze.png"
+        "W/S: avanzar | A/D: strafe | mouse: girar | E: destruir totem cercano | M: mapa completo | N: minimapa | TAB: soltar el mouse | F1: guardar maze.png"
     );
 
     while !window.window_should_close() {
+        // Sólo importan mientras se sigue jugando; se usan más abajo para
+        // decidir qué pistas dibujar en el HUD.
+        let mut near_totem = false;
+        let mut on_locked_goal = false;
+
         if game_state == GameState::Playing {
             process_events(&mut player, &window, &maze, BLOCK_SIZE);
             enemy::update_enemies(&mut enemies, &player, &maze, BLOCK_SIZE);
 
+            if let Some(idx) = totem::interactable(&totems, &player) {
+                near_totem = true;
+                if window.is_key_pressed(KeyboardKey::KEY_E) {
+                    totem::destroy(&mut totems, idx);
+                }
+            }
+
             // Se llegó a la puerta: basta con pisar la celda de meta, sin
             // necesitar un radio de colisión aparte (es la misma celda 'g'
-            // sobre la que se para el sprite de la puerta).
+            // sobre la que se para el sprite de la puerta). Pero sólo abre
+            // si ya no queda ningún tótem en pie.
             let cell_x = (player.pos.x / BLOCK_SIZE as f32) as usize;
             let cell_y = (player.pos.y / BLOCK_SIZE as f32) as usize;
             if maze.get(cell_x, cell_y) == 'g' {
-                game_state = GameState::Won;
-                window.enable_cursor();
+                if totem::all_destroyed(&totems) {
+                    game_state = GameState::Won;
+                    window.enable_cursor();
+                } else {
+                    on_locked_goal = true;
+                }
             }
 
             // Sólo tiene sentido revisar daño si no se ganó ya en este mismo
@@ -465,11 +541,15 @@ fn main() {
         }
 
         // El render sólo sabe dibujar Sprites (posición + textura + tamaño),
-        // no de IA: cada frame se saca una foto de dónde quedaron los
-        // enemigos después de actualizarlos.
+        // no de IA ni de si un tótem sigue en pie: cada frame se saca una
+        // foto de cómo quedó todo después de actualizarlo. Un tótem
+        // destruido no produce Sprite (`Totem::sprite` regresa `None`), así
+        // que desaparece solo del mundo en cuanto se destruye.
         let enemy_sprites: Vec<Sprite> = enemies.iter().map(|e| e.sprite).collect();
+        let totem_sprites: Vec<Sprite> = totems.iter().filter_map(|t| t.sprite()).collect();
         let mut world_sprites = enemy_sprites.clone();
         world_sprites.extend_from_slice(&door_sprites);
+        world_sprites.extend_from_slice(&totem_sprites);
 
         render(
             &mut framebuffer,
@@ -479,6 +559,7 @@ fn main() {
             show_minimap,
             &textures,
             &enemy_sprites,
+            &totem_sprites,
             &world_sprites,
         );
 
@@ -495,6 +576,15 @@ fn main() {
             let mut d = window.begin_drawing(&thread);
             framebuffer.draw(&mut d);
             draw_hearts_hud(&mut d, width, player.lives, player::START_LIVES);
+            draw_totem_counter(&mut d, width, totems.len() - totem::remaining(&totems), totems.len());
+            if game_state == GameState::Playing {
+                if near_totem {
+                    draw_interact_hint(&mut d, width, height);
+                }
+                if on_locked_goal {
+                    draw_locked_door_hint(&mut d, width, totem::remaining(&totems));
+                }
+            }
             match game_state {
                 GameState::Won => draw_end_screen(
                     &mut d,
