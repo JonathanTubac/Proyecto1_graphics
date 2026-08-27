@@ -506,6 +506,13 @@ fn main() {
 
     let audio_device =
         RaylibAudio::init_audio_device().expect("No se pudo inicializar el dispositivo de audio");
+    // El buffer de streaming por defecto (4096 muestras, ~93ms a 44.1kHz) se
+    // vacía si un frame tarda más de la cuenta en llamar a update_stream():
+    // eso suena como un chasquido/tartamudeo en la música. Agrandarlo da
+    // más margen antes de que se note, a cambio de un poquito más de
+    // latencia al arrancar una pista (imperceptible para música ambiental).
+    // Hay que llamarlo antes de cargar los Music, si no, no le pega a esos.
+    audio_device.set_audio_stream_buffer_size_default(16384);
     let sfx = Sfx::load(&audio_device);
 
     let mut framebuffer = Framebuffer::new(&mut window, &thread, width, height);
