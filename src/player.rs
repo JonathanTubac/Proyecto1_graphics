@@ -50,27 +50,6 @@ fn move_vector(angle: f32, forward: f32, strafe: f32) -> (f32, f32) {
     )
 }
 
-/// ¿Cabe el jugador con centro en (x, y)? Revisa las cuatro esquinas de su
-/// caja, así no se mete de lado a una pared.
-fn is_free(maze: &Maze, x: f32, y: f32, block_size: usize) -> bool {
-    for (dx, dy) in [
-        (-RADIUS, -RADIUS),
-        (RADIUS, -RADIUS),
-        (-RADIUS, RADIUS),
-        (RADIUS, RADIUS),
-    ] {
-        let px = x + dx;
-        let py = y + dy;
-        if px < 0.0 || py < 0.0 {
-            return false;
-        }
-        if maze.is_wall(px as usize / block_size, py as usize / block_size) {
-            return false;
-        }
-    }
-    true
-}
-
 /// W/S avanzan y retroceden en la dirección de vista, A/D se mueven de lado
 /// (strafe) sin girarla; el mouse (eje horizontal) es lo que gira la cámara.
 pub fn process_events(
@@ -123,10 +102,10 @@ pub fn process_events(
 
     // Cada eje se prueba por separado: si uno choca, el otro todavía puede
     // avanzar y el jugador se desliza sobre la pared en vez de trabarse.
-    if is_free(maze, player.pos.x + dx, player.pos.y, block_size) {
+    if maze.is_free(player.pos.x + dx, player.pos.y, block_size, RADIUS) {
         player.pos.x += dx;
     }
-    if is_free(maze, player.pos.x, player.pos.y + dy, block_size) {
+    if maze.is_free(player.pos.x, player.pos.y + dy, block_size, RADIUS) {
         player.pos.y += dy;
     }
 }

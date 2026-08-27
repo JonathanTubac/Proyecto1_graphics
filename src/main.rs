@@ -1,4 +1,5 @@
 mod caster;
+mod enemy;
 mod framebuffer;
 mod lighting;
 mod maze;
@@ -11,7 +12,7 @@ use framebuffer::Framebuffer;
 use maze::{Maze, load_maze};
 use player::{Player, process_events};
 use raylib::prelude::*;
-use sprites::{Sprite, draw_sprites, spawn_from_maze};
+use sprites::{Sprite, draw_sprites};
 use std::f32::consts::PI;
 use textures::TextureManager;
 
@@ -302,7 +303,7 @@ fn main() {
     let mut framebuffer = Framebuffer::new(&mut window, &thread, width, height);
     framebuffer.set_background_color(Color::new(25, 25, 35, 255));
     let textures = TextureManager::new(&mut window, &thread);
-    let enemies = spawn_from_maze(&maze, BLOCK_SIZE, 'e', 'e');
+    let mut enemies = enemy::spawn_from_maze(&maze, BLOCK_SIZE, 'e', 'e', 0.0);
     let mut mode = Mode::World3D;
     let mut show_minimap = true;
 
@@ -338,7 +339,21 @@ fn main() {
             show_minimap = !show_minimap;
         }
 
-        render(&mut framebuffer, &maze, &player, mode, show_minimap, &textures, &enemies);
+        enemy::update_enemies(&mut enemies, &player, &maze, BLOCK_SIZE);
+        // El render sólo sabe dibujar Sprites (posición + textura + tamaño),
+        // no de IA: cada frame se saca una foto de dónde quedaron los
+        // enemigos después de actualizarlos.
+        let enemy_sprites: Vec<Sprite> = enemies.iter().map(|e| e.sprite).collect();
+
+        render(
+            &mut framebuffer,
+            &maze,
+            &player,
+            mode,
+            show_minimap,
+            &textures,
+            &enemy_sprites,
+        );
 
         if window.is_key_pressed(KeyboardKey::KEY_F1) {
             framebuffer.render_to_file("maze.png");

@@ -1,6 +1,5 @@
 use crate::framebuffer::Framebuffer;
 use crate::lighting;
-use crate::maze::Maze;
 use crate::player::Player;
 use crate::textures::{TextureManager, TRANSPARENT_COLOR};
 use raylib::prelude::*;
@@ -9,6 +8,12 @@ use std::f32::consts::PI;
 /// Un objeto del mundo que siempre mira al jugador (billboard): enemigo,
 /// item, etc. `texture` es el caracter con el que `TextureManager` busca su
 /// imagen, igual que con las paredes.
+///
+/// Es sólo la foto de "qué dibujar y dónde": la IA de los enemigos (ver
+/// `crate::enemy`) vive aparte y produce uno de estos cada frame para
+/// renderizar, así el dibujado no necesita saber nada de persecución ni de
+/// visión.
+#[derive(Clone, Copy)]
 pub struct Sprite {
     pub pos: Vector2,
     pub texture: char,
@@ -22,22 +27,6 @@ impl Sprite {
     pub fn new(pos: Vector2, texture: char, size: f32) -> Self {
         Sprite { pos, texture, size }
     }
-}
-
-/// Busca en el laberinto las celdas marcadas con `marker` y crea un sprite
-/// centrado en cada una, del tamaño de un bloque.
-pub fn spawn_from_maze(maze: &Maze, block_size: usize, marker: char, texture: char) -> Vec<Sprite> {
-    let half = block_size as f32 / 2.0;
-    maze.find_all(marker)
-        .into_iter()
-        .map(|(x, y)| {
-            let pos = Vector2::new(
-                x as f32 * block_size as f32 + half,
-                y as f32 * block_size as f32 + half,
-            );
-            Sprite::new(pos, texture, block_size as f32)
-        })
-        .collect()
 }
 
 /// Compara sólo RGB: `Color` no deriva `PartialEq` en raylib-rs, y el canal
