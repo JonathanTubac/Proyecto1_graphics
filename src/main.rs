@@ -1,5 +1,6 @@
 mod caster;
 mod framebuffer;
+mod lighting;
 mod maze;
 mod player;
 mod sprites;
@@ -124,9 +125,10 @@ fn render_world3d(
     let half_height = height as f32 / 2.0;
     let num_rays = width as usize;
 
+    let half_fov = player.fov / 2.0;
     // Distancia al plano de proyección: con esto una pared a BLOCK_SIZE de
     // distancia ocupa justo el alto de la pantalla.
-    let distance_to_plane = (width as f32 / 2.0) / (player.fov / 2.0).tan();
+    let distance_to_plane = (width as f32 / 2.0) / half_fov.tan();
 
     let sky = Color::new(25, 25, 45, 255);
     let floor = Color::new(50, 45, 40, 255);
@@ -169,21 +171,20 @@ fn render_world3d(
             continue;
         };
 
-        // Las paredes lejanas se oscurecen y, entre dos paredes a la misma
-        // distancia, la que se vio de canto (north/south) se oscurece un
-        // poco más que la de frente (east/west): así se distinguen las
-        // esquinas del laberinto aunque compartan textura.
-        let shade = (1.0 - (d / 600.0)).clamp(0.25, 1.0) * if intersect.side { 0.75 } else { 1.0 };
+        // La "linterna" del jugador: cerca y al centro de la vista, bien
+        // iluminado; lejos o hacia los bordes, se va a negro. Entre dos
+        // paredes a la misma distancia, la que se vio de canto (north/south)
+        // se oscurece un poco más que la de frente (east/west), para que se
+        // distingan las esquinas del laberinto aunque compartan textura.
+        let mut shade = lighting::torch_intensity(d, a - player.a, half_fov);
+        if intersect.side {
+            shade *= 0.75;
+        }
 
         for y in top..bottom {
             let ty = ((y as f32 - top_f) / stake_height).clamp(0.0, 1.0);
             let texel = tex.sample_uv(intersect.wall_x, ty);
-            framebuffer.set_current_color(Color::new(
-                (texel.r as f32 * shade) as u8,
-                (texel.g as f32 * shade) as u8,
-                (texel.b as f32 * shade) as u8,
-                255,
-            ));
+            framebuffer.set_current_color(lighting::apply(texel, shade));
             framebuffer.set_pixel(x, y);
         }
     }

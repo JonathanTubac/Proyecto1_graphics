@@ -1,4 +1,5 @@
 use crate::framebuffer::Framebuffer;
+use crate::lighting;
 use crate::maze::Maze;
 use crate::player::Player;
 use crate::textures::{TextureManager, TRANSPARENT_COLOR};
@@ -144,6 +145,12 @@ fn draw_sprite(
         return;
     };
 
+    // Misma linterna que ilumina las paredes: un enemigo lejos o hacia el
+    // borde de la vista se pierde en la oscuridad igual que la pared que
+    // tiene detrás. Se calcula una sola vez porque todo el sprite comparte
+    // la misma distancia aproximada.
+    let shade = lighting::torch_intensity(distance, angle_diff, half_fov);
+
     for x in start_x..end_x {
         // 6. z-buffer: si la pared de esta columna está más cerca que el
         //    sprite, toda la columna queda tapada y ni se muestrea.
@@ -162,7 +169,7 @@ fn draw_sprite(
                 continue;
             }
 
-            framebuffer.set_current_color(color);
+            framebuffer.set_current_color(lighting::apply(color, shade));
             framebuffer.set_pixel(x, y);
         }
     }
