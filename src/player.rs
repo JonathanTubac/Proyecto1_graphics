@@ -14,6 +14,9 @@ pub const START_LIVES: u32 = 3;
 /// Frames de invulnerabilidad tras recibir daño (a 60 fps, ~1.2s), para que
 /// un enemigo pegado al jugador no le quite las 3 vidas de un solo tirón.
 const INVULN_FRAMES: u32 = 72;
+/// Cada cuántos frames suena un paso mientras el jugador camina (a 60 fps,
+/// ~0.3s entre pasos).
+const FOOTSTEP_INTERVAL: u32 = 18;
 
 /// El jugador es el punto de vista del mundo: dónde está y hacia dónde ve.
 pub struct Player {
@@ -27,6 +30,11 @@ pub struct Player {
     pub lives: u32,
     /// Frames que faltan para poder volver a recibir daño.
     invuln_timer: u32,
+    /// Si el jugador se desplazó de verdad en el último frame (no sólo tenía
+    /// una tecla de movimiento apretada: pudo estar bloqueado por una pared).
+    moving: bool,
+    /// Frames que faltan para el siguiente sonido de paso.
+    footstep_timer: u32,
 }
 
 impl Player {
@@ -37,6 +45,8 @@ impl Player {
             fov,
             lives: START_LIVES,
             invuln_timer: 0,
+            moving: false,
+            footstep_timer: 0,
         }
     }
 
@@ -73,6 +83,24 @@ impl Player {
         }
         self.lives -= 1;
         self.invuln_timer = INVULN_FRAMES;
+    }
+
+    /// Si toca reproducir un sonido de paso este frame. Sólo cuenta mientras
+    /// el jugador se está desplazando de verdad; en cuanto se detiene, el
+    /// contador se reinicia para que el primer paso al retomar la marcha
+    /// suene de inmediato en vez de heredar el tiempo que ya llevaba corrido.
+    pub fn should_play_footstep(&mut self) -> bool {
+        if !self.moving {
+            self.footstep_timer = 0;
+            return false;
+        }
+        if self.footstep_timer == 0 {
+            self.footstep_timer = FOOTSTEP_INTERVAL;
+            true
+        } else {
+            self.footstep_timer -= 1;
+            false
+        }
     }
 }
 
@@ -124,6 +152,7 @@ pub fn process_events(
     }
 
     if forward == 0.0 && strafe == 0.0 {
+        player.moving = false;
         return;
     }
 
@@ -138,6 +167,8 @@ pub fn process_events(
         dy *= scale;
     }
 
+    let before = player.pos;
+
     // Cada eje se prueba por separado: si uno choca, el otro todavía puede
     // avanzar y el jugador se desliza sobre la pared en vez de trabarse.
     if maze.is_free(player.pos.x + dx, player.pos.y, block_size, RADIUS) {
@@ -146,6 +177,11 @@ pub fn process_events(
     if maze.is_free(player.pos.x, player.pos.y + dy, block_size, RADIUS) {
         player.pos.y += dy;
     }
+
+    // "Moviéndose" quiere decir que de verdad cambió de lugar, no sólo que
+    // tenía una tecla apretada: si está bloqueado contra una pared no debería
+    // sonar como si estuviera caminando.
+    player.moving = player.pos.x != before.x || player.pos.y != before.y;
 }
 
 #[cfg(test)]
@@ -233,5 +269,50 @@ mod tests {
             }
         }
         assert_eq!(player.lives, 0);
+    }
+
+    #[test]
+    fn no_footsteps_while_standing_still() {
+        let mut player = Player::new(Vector2::new(0.0, 0.0), 0.0, PI / 3.0);
+        for _ in 0..FOOTSTEP_INTERVAL * 2 {
+            assert!(!player.should_play_footstep());
+        }
+    }
+
+    #[test]
+    fn footsteps_repeat_at_a_fixed_interval_while_moving() {
+        let mut player = Player::new(Vector2::new(0.0, 0.0), 0.0, PI / 3.0);
+        player.moving = true;
+
+        // El primer paso suena de inmediato al arrancar a caminar.
+        assert!(player.should_play_footstep());
+
+        let mut steps = 0;
+        for _ in 0..FOOTSTEP_INTERVAL * 3 {
+            if player.should_play_footstep() {
+                steps += 1;
+            }
+        }
+        // Cada paso siguiente tarda FOOTSTEP_INTERVAL + 1 llamadas (el
+        // intervalo de espera más la llamada que sí suena): en 3 intervalos
+        // sólo alcanza a caer 2 veces más.
+        assert_eq!(steps, 2);
+    }
+
+    #[test]
+    fn stopping_resets_the_footstep_countdown() {
+        let mut player = Player::new(Vector2::new(0.0, 0.0), 0.0, PI / 3.0);
+        player.moving = true;
+        player.should_play_footstep(); // primer paso, arranca el conteo
+        player.should_play_footstep();
+        player.should_play_footstep();
+
+        player.moving = false;
+        player.should_play_footstep(); // se detiene: reinicia el contador
+
+        player.moving = true;
+        // Debería sonar de inmediato otra vez, no a mitad de un intervalo
+        // heredado de antes de detenerse.
+        assert!(player.should_play_footstep());
     }
 }

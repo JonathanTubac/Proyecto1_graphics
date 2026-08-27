@@ -1,3 +1,4 @@
+mod audio;
 mod caster;
 mod enemy;
 mod framebuffer;
@@ -8,6 +9,7 @@ mod sprites;
 mod textures;
 mod totem;
 
+use audio::Sfx;
 use caster::{cast_ray, draw_ray_path};
 use framebuffer::Framebuffer;
 use maze::{Maze, load_maze};
@@ -16,6 +18,11 @@ use raylib::prelude::*;
 use sprites::{Sprite, draw_sprites};
 use std::f32::consts::PI;
 use textures::TextureManager;
+
+/// Cuánto se acelera el enemigo por cada tótem destruido después del
+/// primero (el que lo despierta). Con esto llega a la meta ~1.9x de rápido
+/// que al despertar, para que la tensión suba con cada tótem que se rompe.
+const SPEED_PER_TOTEM: f32 = 0.3;
 
 const BLOCK_SIZE: usize = 40;
 /// Rayos del abanico en la vista 2D. En 3D se lanza uno por columna.
@@ -453,10 +460,17 @@ fn main() {
     // ventana, que es lo que se necesita para girar la cámara con el mouse.
     window.disable_cursor();
 
+    let audio_device =
+        RaylibAudio::init_audio_device().expect("No se pudo inicializar el dispositivo de audio");
+    let sfx = Sfx::load(&audio_device);
+    sfx.start_calm_ambient();
+
     let mut framebuffer = Framebuffer::new(&mut window, &thread, width, height);
     framebuffer.set_background_color(Color::new(10, 9, 13, 255));
     let textures = TextureManager::new(&mut window, &thread);
-    let mut enemies = enemy::spawn_from_maze(&maze, BLOCK_SIZE, 'e', 'e', 0.0);
+    // Ningún enemigo hasta que se rompa el primer tótem: el laberinto sólo
+    // trae un marcador 'e' (uno por nivel), y se planta apenas se necesite.
+    let mut enemies: Vec<enemy::Enemy> = Vec::new();
     // La puerta de salida es un sprite fijo, no un Enemy: no persigue ni ve,
     // sólo se planta sobre la celda de meta para poder verla en 3D.
     let door_sprites = sprites::spawn_from_maze(&maze, BLOCK_SIZE, 'g', 'g');
@@ -466,10 +480,9 @@ fn main() {
     let mut game_state = GameState::Playing;
 
     println!(
-        "Jugador en celda {:?}, meta en {:?}, {} enemigos, {} totems, fov {:.2} rad",
+        "Jugador en celda {:?}, meta en {:?}, {} totems. El enemigo despierta al romper el primero. fov {:.2} rad",
         (start_x, start_y),
         maze.goal(),
-        enemies.len(),
         totems.len(),
         player.fov
     );
@@ -485,12 +498,38 @@ fn main() {
 
         if game_state == GameState::Playing {
             process_events(&mut player, &window, &maze, BLOCK_SIZE);
-            enemy::update_enemies(&mut enemies, &player, &maze, BLOCK_SIZE);
+            if player.should_play_footstep() {
+                sfx.play_player_footstep();
+            }
+
+            // Más rápido por cada tótem roto después del primero (el que lo
+            // despierta), para que la tensión suba con el progreso: da igual
+            // si todavía no hay enemigo, `update_enemies` no hace nada sobre
+            // una lista vacía.
+            let destroyed_totems = totems.len() - totem::remaining(&totems);
+            let speed_multiplier =
+                1.0 + destroyed_totems.saturating_sub(1) as f32 * SPEED_PER_TOTEM;
+            enemy::update_enemies(&mut enemies, &player, &maze, BLOCK_SIZE, speed_multiplier);
+            if enemies.iter().any(|e| e.wants_footstep()) {
+                sfx.play_enemy_footstep();
+            }
 
             if let Some(idx) = totem::interactable(&totems, &player) {
                 near_totem = true;
                 if window.is_key_pressed(KeyboardKey::KEY_E) {
                     totem::destroy(&mut totems, idx);
+
+                    if enemies.is_empty() {
+                        // Éste era el primer tótem: aquí despierta el único
+                        // enemigo del nivel.
+                        enemies = enemy::spawn_from_maze(&maze, BLOCK_SIZE, 'e', 'e', 0.0);
+                        sfx.play_first_totem_broken();
+                        sfx.switch_to_tense_ambient();
+                    } else if totem::all_destroyed(&totems) {
+                        sfx.play_last_totem_destroyed();
+                    } else {
+                        sfx.play_any_totem_destroyed();
+                    }
                 }
             }
 
@@ -521,6 +560,12 @@ fn main() {
                 }
             }
         }
+
+        // El streaming de música lee el archivo bajo demanda: si no se
+        // llama cada frame, se corta a media canción en vez de sonar
+        // completa. Se hace pase lo que pase (aunque ya se haya ganado o
+        // perdido), para que el ambiente no se detenga en seco.
+        sfx.update_streams();
 
         if window.is_key_pressed(KeyboardKey::KEY_TAB) {
             if window.is_cursor_hidden() {

@@ -30,6 +30,10 @@ const STOP_DISTANCE: f32 = 24.0;
 const DAMAGE_RANGE: f32 = 26.0;
 /// Radio de colisión del enemigo contra las paredes (mismo criterio que el jugador).
 const RADIUS: f32 = 8.0;
+/// Cada cuántos frames suena un paso del enemigo mientras se mueve, a
+/// velocidad base (a 60 fps, ~0.35s entre pasos). Se acorta según qué tan
+/// rápido esté yendo en este momento.
+const BASE_FOOTSTEP_INTERVAL: f32 = 21.0;
 
 /// Si un enemigo ve al jugador ahora mismo o no. Se recalcula cada frame a
 /// partir de la visión: no hay memoria, en cuanto lo pierde de vista deja de
@@ -54,6 +58,10 @@ pub struct Enemy {
     wander_dir: f32,
     /// Frames que faltan para elegir una nueva dirección de ronda.
     wander_timer: u32,
+    /// Frames que faltan para el siguiente sonido de paso.
+    footstep_timer: u32,
+    /// Si toca reproducir un sonido de paso justo este frame.
+    footstep_due: bool,
 }
 
 impl Enemy {
@@ -64,6 +72,8 @@ impl Enemy {
             state: State::Idle,
             wander_dir: facing,
             wander_timer: 0,
+            footstep_timer: 0,
+            footstep_due: false,
         }
     }
 
@@ -76,6 +86,13 @@ impl Enemy {
     #[allow(dead_code)]
     pub fn is_chasing(&self) -> bool {
         self.state == State::Chasing
+    }
+
+    /// Si toca reproducir un sonido de paso de este enemigo justo este
+    /// frame. Se recalcula en cada `update_enemies`, así que sólo hay que
+    /// leerlo justo después de llamarla.
+    pub fn wants_footstep(&self) -> bool {
+        self.footstep_due
     }
 }
 
@@ -152,7 +169,18 @@ pub fn damage_player_if_close(enemies: &[Enemy], player: &mut Player) {
 
 /// Actualiza la visión, el estado y la posición de todos los enemigos para
 /// este frame: persiguen si ven al jugador, patrullan solos si no.
-pub fn update_enemies(enemies: &mut [Enemy], player: &Player, maze: &Maze, block_size: usize) {
+///
+/// `speed_multiplier` escala tanto la velocidad de persecución como la de
+/// ronda: en este laberinto se usa para que el único enemigo del nivel se
+/// vuelva más rápido con cada tótem que se destruye, así que se recalcula
+/// afuera (ver `crate::main`) y se pasa fresco cada frame.
+pub fn update_enemies(
+    enemies: &mut [Enemy],
+    player: &Player,
+    maze: &Maze,
+    block_size: usize,
+    speed_multiplier: f32,
+) {
     let mut rng = rand::thread_rng();
     for enemy in enemies {
         enemy.state = if can_see_player(enemy, player, maze, block_size) {
@@ -161,17 +189,45 @@ pub fn update_enemies(enemies: &mut [Enemy], player: &Player, maze: &Maze, block
             State::Idle
         };
 
-        match enemy.state {
-            State::Chasing => chase_player(enemy, player, maze, block_size),
-            State::Idle => wander(enemy, maze, block_size, &mut rng),
-        }
+        let moved = match enemy.state {
+            State::Chasing => chase_player(enemy, player, maze, block_size, speed_multiplier),
+            State::Idle => wander(enemy, maze, block_size, speed_multiplier, &mut rng),
+        };
+
+        update_footstep_timer(enemy, moved, speed_multiplier);
+    }
+}
+
+/// Cada vez que el enemigo avanza de verdad, cuenta hacia el siguiente
+/// sonido de paso; entre más rápido vaya, más seguido suenan. Si no se movió
+/// este frame (chocó, o está parado a `STOP_DISTANCE` del jugador), no debe
+/// sonar ni heredar un conteo a medias de la próxima vez que retome el paso.
+fn update_footstep_timer(enemy: &mut Enemy, moved: bool, speed_multiplier: f32) {
+    if !moved {
+        enemy.footstep_timer = 0;
+        enemy.footstep_due = false;
+        return;
+    }
+
+    if enemy.footstep_timer == 0 {
+        enemy.footstep_due = true;
+        enemy.footstep_timer = (BASE_FOOTSTEP_INTERVAL / speed_multiplier.max(0.01)) as u32;
+    } else {
+        enemy.footstep_due = false;
+        enemy.footstep_timer -= 1;
     }
 }
 
 /// Camina en línea recta hacia el jugador, deslizándose sobre las paredes
 /// igual que el jugador, y se para a `STOP_DISTANCE` para no superponerse
-/// con la cámara.
-fn chase_player(enemy: &mut Enemy, player: &Player, maze: &Maze, block_size: usize) {
+/// con la cámara. Regresa si avanzó de verdad este frame.
+fn chase_player(
+    enemy: &mut Enemy,
+    player: &Player,
+    maze: &Maze,
+    block_size: usize,
+    speed_multiplier: f32,
+) -> bool {
     let dx = player.pos.x - enemy.pos().x;
     let dy = player.pos.y - enemy.pos().y;
     let distance = (dx * dx + dy * dy).sqrt();
@@ -185,18 +241,26 @@ fn chase_player(enemy: &mut Enemy, player: &Player, maze: &Maze, block_size: usi
     enemy.wander_dir = enemy.facing;
 
     if distance < STOP_DISTANCE {
-        return; // ya está lo bastante cerca, no hace falta seguir avanzando
+        return false; // ya está lo bastante cerca, no hace falta seguir avanzando
     }
 
-    let (step_x, step_y) = (dx / distance * CHASE_SPEED, dy / distance * CHASE_SPEED);
-    move_with_wall_slide(enemy, maze, block_size, step_x, step_y);
+    let speed = CHASE_SPEED * speed_multiplier;
+    let (step_x, step_y) = (dx / distance * speed, dy / distance * speed);
+    move_with_wall_slide(enemy, maze, block_size, step_x, step_y)
 }
 
 /// Camina solo en una dirección hasta chocar con una pared o hasta que se
 /// cumpla el tiempo de ronda, momento en el que elige una dirección nueva al
 /// azar. Es un recorrido simple ("rebota" en las paredes), no un patrullaje
 /// por puntos fijos, pero alcanza para que el laberinto se sienta habitado.
-fn wander(enemy: &mut Enemy, maze: &Maze, block_size: usize, rng: &mut impl Rng) {
+/// Regresa si avanzó de verdad este frame.
+fn wander(
+    enemy: &mut Enemy,
+    maze: &Maze,
+    block_size: usize,
+    speed_multiplier: f32,
+    rng: &mut impl Rng,
+) -> bool {
     if enemy.wander_timer == 0 {
         enemy.wander_dir = rng.gen_range(0.0..TAU);
         enemy.wander_timer = WANDER_CHANGE_INTERVAL;
@@ -205,8 +269,9 @@ fn wander(enemy: &mut Enemy, maze: &Maze, block_size: usize, rng: &mut impl Rng)
     }
     enemy.facing = enemy.wander_dir;
 
-    let step_x = enemy.wander_dir.cos() * WANDER_SPEED;
-    let step_y = enemy.wander_dir.sin() * WANDER_SPEED;
+    let speed = WANDER_SPEED * speed_multiplier;
+    let step_x = enemy.wander_dir.cos() * speed;
+    let step_y = enemy.wander_dir.sin() * speed;
     let moved = move_with_wall_slide(enemy, maze, block_size, step_x, step_y);
 
     // Chocó de lleno (no avanzó en ningún eje): no tiene caso esperar al
@@ -215,6 +280,8 @@ fn wander(enemy: &mut Enemy, maze: &Maze, block_size: usize, rng: &mut impl Rng)
     if !moved {
         enemy.wander_timer = 0;
     }
+
+    moved
 }
 
 /// Mueve al enemigo por (step_x, step_y), probando cada eje por separado:
@@ -312,7 +379,7 @@ mod tests {
         // el azar en una corrida particular.
         let mut rng = StdRng::seed_from_u64(7);
         for _ in 0..30 {
-            wander(&mut enemy, &maze, block, &mut rng);
+            wander(&mut enemy, &maze, block, 1.0, &mut rng);
         }
 
         assert!(
@@ -329,7 +396,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(7);
 
         for _ in 0..300 {
-            wander(&mut enemy, &maze, block, &mut rng);
+            wander(&mut enemy, &maze, block, 1.0, &mut rng);
             assert!(
                 maze.is_free(enemy.pos().x, enemy.pos().y, block, 0.0),
                 "el enemigo terminó dentro de una pared: {:?}",
@@ -349,7 +416,7 @@ mod tests {
         enemy.wander_timer = WANDER_CHANGE_INTERVAL; // que no se deba a que ya le tocaba cambiar
 
         let mut rng = StdRng::seed_from_u64(7);
-        wander(&mut enemy, &maze, block, &mut rng);
+        wander(&mut enemy, &maze, block, 1.0, &mut rng);
 
         assert_eq!(enemy.wander_timer, 0, "debería forzar un cambio de dirección al chocar");
     }
@@ -372,5 +439,56 @@ mod tests {
         damage_player_if_close(&enemies, &mut player);
 
         assert_eq!(player.lives, crate::player::START_LIVES);
+    }
+
+    #[test]
+    fn higher_speed_multiplier_covers_more_ground_while_chasing() {
+        let maze = open_room(30, 5);
+        let block = 20;
+
+        let mut slow = Enemy::new(Vector2::new(40.0, 50.0), 'e', block as f32, 0.0);
+        let player = Player::new(Vector2::new(400.0, 50.0), 0.0, PI / 3.0);
+        chase_player(&mut slow, &player, &maze, block, 1.0);
+
+        let mut fast = Enemy::new(Vector2::new(40.0, 50.0), 'e', block as f32, 0.0);
+        chase_player(&mut fast, &player, &maze, block, 2.0);
+
+        let slow_dist = (slow.pos() - Vector2::new(40.0, 50.0)).length();
+        let fast_dist = (fast.pos() - Vector2::new(40.0, 50.0)).length();
+        assert!(
+            fast_dist > slow_dist,
+            "un multiplicador mayor debería avanzar más en el mismo frame: lento={slow_dist} rapido={fast_dist}"
+        );
+    }
+
+    #[test]
+    fn footsteps_sound_more_often_at_higher_speed() {
+        // Cuarto bien largo y jugador bien lejos: ni al doble de velocidad
+        // el enemigo alcanza a llegar (y por lo tanto a pararse) dentro de
+        // las 100 vueltas, así que la comparación no se contamina con
+        // frames parado.
+        let maze = open_room(60, 5);
+        let block = 20;
+        let player = Player::new(Vector2::new(1000.0, 50.0), 0.0, PI / 3.0);
+
+        let count_footsteps = |speed_multiplier: f32| {
+            let mut enemy = Enemy::new(Vector2::new(40.0, 50.0), 'e', block as f32, 0.0);
+            let mut count = 0;
+            for _ in 0..100 {
+                enemy.state = State::Chasing;
+                let moved = chase_player(&mut enemy, &player, &maze, block, speed_multiplier);
+                assert!(moved, "el enemigo no debería haber alcanzado al jugador todavía");
+                update_footstep_timer(&mut enemy, moved, speed_multiplier);
+                if enemy.wants_footstep() {
+                    count += 1;
+                }
+            }
+            count
+        };
+
+        assert!(
+            count_footsteps(2.0) > count_footsteps(1.0),
+            "al doble de velocidad deberían sonar más pasos en el mismo número de frames"
+        );
     }
 }
