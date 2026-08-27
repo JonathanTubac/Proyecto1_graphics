@@ -1,5 +1,10 @@
 use raylib::prelude::*;
 
+/// Distancia más allá de la cual el paso del enemigo ya no se alcanza a
+/// oír. Los pasos del jugador no necesitan esto: siempre sonarían al oído
+/// del propio jugador.
+const ENEMY_FOOTSTEP_MAX_RANGE: f32 = 320.0;
+
 /// Todos los efectos y música cargados una sola vez al arrancar. Igual que
 /// con `TextureManager`, cada campo es `Option`: si un archivo no está o no
 /// se pudo cargar, esa pista simplemente queda en silencio en vez de tronar
@@ -49,8 +54,14 @@ impl<'aud> Sfx<'aud> {
         play(&self.player_footstep);
     }
 
-    pub fn play_enemy_footstep(&self) {
-        play(&self.enemy_footstep);
+    /// Suena más bajo mientras más lejos está el enemigo que dio el paso,
+    /// hasta apagarse del todo a `ENEMY_FOOTSTEP_MAX_RANGE` o más.
+    pub fn play_enemy_footstep_at(&self, distance: f32) {
+        let volume = (1.0 - distance / ENEMY_FOOTSTEP_MAX_RANGE).clamp(0.0, 1.0);
+        if let Some(s) = &self.enemy_footstep {
+            s.set_volume(volume);
+            s.play();
+        }
     }
 
     /// Se dispara al romper un tótem que no es ni el primero ni el último:
@@ -73,17 +84,42 @@ impl<'aud> Sfx<'aud> {
         play(&self.first_totem_enemy_sound);
     }
 
-    /// Corta el ambiente tranquilo y arranca el tenso. Se llama una sola vez,
-    /// justo cuando se rompe el primer tótem.
+    /// Corta el ambiente tranquilo y arranca el tenso a todo volumen. Se
+    /// llama una sola vez, justo cuando se rompe el primer tótem: pisa
+    /// cualquier volumen que le hubiera dejado el zumbido de cercanía a un
+    /// tótem (`set_totem_hum_proximity`), porque ya estaba sonando de
+    /// fondo en silencio desde `start_calm_ambient`.
     pub fn switch_to_tense_ambient(&self) {
         stop_music(&self.ambient_calm);
+        if let Some(m) = &self.ambient_tense {
+            m.set_volume(1.0);
+        }
         play_music(&self.ambient_tense);
     }
 
-    /// Arranca el ambiente tranquilo. Se llama una sola vez al iniciar la
-    /// partida.
+    /// Arranca el ambiente tranquilo. También deja el ambiente tenso ya
+    /// sonando mudo (volumen 0) desde ya, en vez de arrancarlo recién al
+    /// acercarse a un tótem: así `set_totem_hum_proximity` sólo tiene que
+    /// subirle el volumen, sin cortes por arrancar el streaming a medio
+    /// frame. Se llama una sola vez al iniciar la partida.
     pub fn start_calm_ambient(&self) {
         play_music(&self.ambient_calm);
+        if let Some(m) = &self.ambient_tense {
+            m.set_volume(0.0);
+        }
+        play_music(&self.ambient_tense);
+    }
+
+    /// Zumbido de aviso de que hay un tótem cerca: reusa el ambiente tenso
+    /// (ya sonando mudo desde `start_calm_ambient`) subiéndole el volumen
+    /// según qué tan cerca está el tótem sin destruir más próximo. Sólo
+    /// tiene sentido llamarlo antes de que despierte el enemigo; después,
+    /// `switch_to_tense_ambient` deja ese mismo ambiente fijo a todo
+    /// volumen.
+    pub fn set_totem_hum_proximity(&self, proximity: f32) {
+        if let Some(m) = &self.ambient_tense {
+            m.set_volume(proximity.clamp(0.0, 1.0));
+        }
     }
 
     /// Corta cualquiera de los dos ambientes de partida que esté sonando.

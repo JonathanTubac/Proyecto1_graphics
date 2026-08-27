@@ -644,8 +644,23 @@ fn run_level(
             let speed_multiplier =
                 1.0 + destroyed_totems.saturating_sub(1) as f32 * SPEED_PER_TOTEM;
             enemy::update_enemies(&mut enemies, &player, &maze, BLOCK_SIZE, speed_multiplier);
-            if enemies.iter().any(|e| e.wants_footstep()) {
-                sfx.play_enemy_footstep();
+            // Más bajo mientras más lejos está el enemigo, para que el oído
+            // ayude a ubicarlo sin necesidad de verlo.
+            let footstep_distance = enemies
+                .iter()
+                .filter(|e| e.wants_footstep())
+                .map(|e| (e.pos() - player.pos).length())
+                .fold(f32::INFINITY, f32::min);
+            if footstep_distance.is_finite() {
+                sfx.play_enemy_footstep_at(footstep_distance);
+            }
+
+            // Zumbido de aviso: suena más fuerte mientras más cerca está el
+            // tótem sin destruir más próximo. Sólo antes de que despierte el
+            // enemigo; después, el ambiente tenso ya suena a todo volumen y
+            // no tiene sentido que compita con la cercanía a un tótem.
+            if enemies.is_empty() {
+                sfx.set_totem_hum_proximity(totem::nearest_proximity(&totems, &player));
             }
 
             if let Some(idx) = totem::interactable(&totems, &player) {
