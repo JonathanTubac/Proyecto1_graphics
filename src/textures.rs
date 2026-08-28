@@ -405,10 +405,21 @@ fn draw_totem_shape(image: &mut Image, size: i32) {
 /// todo el cuadro (nada de fondo transparente): es un mueble sólido, no
 /// algo que se recorte contra el fondo.
 fn draw_locker_shape(image: &mut Image, size: i32) {
-    let metal = Color::new(46, 52, 58, 255);
-    let metal_dark = Color::new(24, 28, 32, 255);
-    let vent = Color::new(14, 16, 18, 255);
-    let handle = Color::new(150, 140, 40, 255);
+    // Más claro que un casillero "real" a propósito: con la linterna tan
+    // tenue (ver `crate::lighting`), un metal tan oscuro como el de una
+    // pared se pierde contra ella a cualquier distancia razonable. Este es
+    // el único mueble con el que el jugador necesita toparse a tiempo
+    // mientras huye, así que tiene que notarse antes de estar encima.
+    let metal = Color::new(92, 100, 110, 255);
+    let metal_dark = Color::new(48, 52, 58, 255);
+    let vent = Color::new(28, 30, 34, 255);
+    let handle = Color::new(205, 180, 60, 255);
+    // Lucecita de "salida de emergencia": el mismo lenguaje visual que la
+    // runa brillante del tótem (ver `draw_totem_shape`) para que, aun casi a
+    // oscuras, el jugador reconozca de un vistazo "esto es un refugio", no
+    // sólo una mancha más clara en la pared.
+    let led_glow = Color::new(70, 230, 120, 255);
+    let led_core = Color::new(210, 255, 220, 255);
     let w = size as f32;
 
     image.draw_rectangle(0, 0, size, size, metal_dark);
@@ -436,6 +447,15 @@ fn draw_locker_shape(image: &mut Image, size: i32) {
     // Rayones/óxido, para que no se vea impecable.
     image.draw_line((w * 0.2) as i32, (w * 0.6) as i32, (w * 0.3) as i32, (w * 0.85) as i32, metal_dark);
     image.draw_line((w * 0.7) as i32, (w * 0.3) as i32, (w * 0.78) as i32, (w * 0.5) as i32, metal_dark);
+
+    // Lucecita sobre cada hoja: el único color saturado de todo el sprite,
+    // igual que la runa del tótem, para que siga leyéndose como "aquí hay
+    // algo" aunque la linterna ya casi no llegue.
+    for cx in [w * 0.25, w * 0.75] {
+        let cy = (w * 0.10) as i32;
+        image.draw_circle(cx as i32, cy, (w * 0.035) as i32, led_glow);
+        image.draw_circle(cx as i32, cy, (w * 0.015) as i32, led_core);
+    }
 }
 
 /// Genera una textura de 64x64 con un patrón de ladrillo simple, un color
