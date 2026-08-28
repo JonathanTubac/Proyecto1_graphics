@@ -1,87 +1,87 @@
 # Mazetot
 
-Pequeño juego de terror en primera persona hecho en Rust con [raylib](https://www.raylib.com/),
-sobre un motor de raycasting propio (la misma técnica de Wolfenstein 3D): el mundo es un mapa 2D
-de caracteres y la "tercera dimensión" se arma lanzando un rayo por cada columna de pantalla y
-convirtiendo la distancia a la pared en la altura de esa columna. Todo se dibuja pixel por pixel
-sobre un framebuffer propio en RAM; raylib solo se usa para abrir la ventana, leer teclado/mouse,
-reproducir audio y subir ese framebuffer a la pantalla como textura.
+A small first-person horror game written in Rust with [raylib](https://www.raylib.com/), built
+on a custom raycasting engine (the same technique Wolfenstein 3D used): the world is a 2D grid
+of characters, and the "third dimension" comes from casting one ray per screen column and
+turning the distance to the wall into that column's height. Everything is drawn pixel by pixel
+onto a software framebuffer in RAM; raylib is only used to open the window, read keyboard/mouse
+input, play audio, and upload that framebuffer to the screen as a texture.
 
-Sobre ese motor hay un juego completo: un menú con 3 niveles, tótems que hay que destruir, un
-enemigo que persigue con IA (visión + memoria de la última posición conocida + pathfinding),
-lockers empotrados en las paredes para esconderse de él, una linterna como única fuente de luz
-y audio dinámico (pasos, ambiente y zumbidos que cambian de volumen según la distancia).
+On top of that engine there's a full little game: a menu with 3 levels, totems you have to
+destroy, an enemy that hunts you with real AI (vision + memory of your last known position +
+pathfinding), lockers built into the walls to hide from it, a flashlight as the only light
+source, and dynamic audio (footsteps, ambience, and hums that change volume with distance).
 
 ## Video
 
-[![Video de Mazetot](https://img.youtube.com/vi/a3fiC9cPOMk/hqdefault.jpg)](https://youtu.be/a3fiC9cPOMk)
+[![Mazetot video](https://img.youtube.com/vi/a3fiC9cPOMk/hqdefault.jpg)](https://youtu.be/a3fiC9cPOMk)
 
-[▶ Ver en YouTube](https://youtu.be/a3fiC9cPOMk)
+[▶ Watch on YouTube](https://youtu.be/a3fiC9cPOMk)
 
-## Cómo correrlo
+## How to run it
 
 ```bash
-cargo run           # modo debug, corre a 60 fps sin problema
-cargo run --release # si quieren más margen
+cargo run           # debug mode, runs fine at 60 fps
+cargo run --release # for more headroom
 ```
 
-Hay que correrlo desde la raíz del proyecto: ahí es donde vive `assets/` (texturas y audio) y
-los `maze1.txt` / `maze2.txt` / `maze3.txt` que carga el menú de selección de nivel.
+Run it from the project root: that's where `assets/` (textures and audio) and the
+`maze1.txt` / `maze2.txt` / `maze3.txt` files loaded by the level-select menu live.
 
-Si falta algún archivo de `assets/` (una textura o un sonido), el juego no truena: genera un
-marcador de posición o simplemente reproduce en silencio esa pista.
+If a file is missing from `assets/` (a texture or a sound), the game doesn't crash: it
+generates a placeholder, or that track simply plays silently.
 
-## Controles
+## Controls
 
-**Menú**
+**Menu**
 
-| Tecla | Acción |
+| Key | Action |
 |---|---|
-| Flechas / `W` `S` | Moverse entre opciones |
-| `ENTER` / `SPACE` | Elegir |
-| `ESC` | Volver a la pantalla anterior del menú, o salir desde la principal |
+| Arrows / `W` `S` | Move between options |
+| `ENTER` / `SPACE` | Select |
+| `ESC` | Go back a screen, or quit from the main menu |
 
-**En el nivel**
+**In a level**
 
-| Tecla | Acción |
+| Key | Action |
 |---|---|
-| `W` / `S` | Avanzar / retroceder |
-| `A` / `D` | Moverse de lado (strafe) |
-| Mouse | Girar la cámara |
-| `SHIFT` | Correr (gasta energía) |
-| `E` | Destruir el tótem cercano, o entrar/salir de un locker |
-| `M` | Ver el mapa completo |
-| `N` | Mostrar u ocultar el minimapa |
-| `TAB` | Soltar o atrapar el mouse |
-| `F1` | Guardar una captura en `maze.png` |
-| `ESC` | Volver al menú (al ganar o perder) |
+| `W` / `S` | Move forward / backward |
+| `A` / `D` | Strafe |
+| Mouse | Turn the camera |
+| `SHIFT` | Run (drains stamina) |
+| `E` | Destroy the nearby totem, or enter/exit a locker |
+| `M` | View the full map |
+| `N` | Toggle the minimap |
+| `TAB` | Release or capture the mouse |
+| `F1` | Save a screenshot to `maze.png` |
+| `ESC` | Back to the menu (after winning or losing) |
 
-## Cómo se juega
+## How to play
 
-Cada nivel tiene varios tótems repartidos por el laberinto. El primero que se rompe (`E` cerca
-de uno) despierta al único enemigo del nivel; cada tótem siguiente lo acelera un poco más. La
-puerta de salida (`g`) no se abre hasta que no queda ningún tótem en pie.
+Each level has several totems scattered around the maze. Breaking the first one (`E` near it)
+wakes up the level's single enemy; every totem after that speeds it up a bit more. The exit
+door (`g`) won't open until every totem is down.
 
-Mientras no lo ve, el enemigo patrulla solo. Si lo ve, lo persigue de verdad. Cada vez que se
-rompe un tótem, el enemigo va directo a investigar dónde estaba el jugador en ese momento,
-aunque no lo vea — como si hubiera oído el estruendo. Si llega ahí y no encuentra a nadie,
-pierde el rastro y vuelve a patrullar. Esconderse en un locker cercano (`E`) es la forma de que
-eso pase: mientras se está adentro, el enemigo no puede ver ni tocar al jugador.
+While it can't see you, the enemy patrols on its own. If it spots you, it gives real chase.
+Every time a totem breaks, the enemy heads straight for wherever you were standing at that
+moment, even without seeing you — as if it heard the noise. If it gets there and finds no one,
+it loses the trail and goes back to patrolling. Hiding in a nearby locker (`E`) is how you make
+that happen: while you're inside, the enemy can neither see nor touch you.
 
-## El archivo del laberinto
+## The maze file
 
-`maze1.txt`, `maze2.txt` y `maze3.txt` son texto plano donde cada caracter es una celda de
-`BLOCK_SIZE` píxeles:
+`maze1.txt`, `maze2.txt` and `maze3.txt` are plain text where each character is a
+`BLOCK_SIZE`-pixel cell:
 
-| Caracter | Significado |
+| Character | Meaning |
 |---|---|
-| `+` `-` `\|` | Pared |
-| espacio | Piso |
-| `p` | Posición inicial del jugador |
-| `g` | Meta (no abre hasta destruir todos los tótems) |
-| `t` | Tótem a destruir |
-| `e` | Punto donde aparece el enemigo (al romper el primer tótem) |
-| `l` | Locker: cuenta como pared (bloquea el paso) y se puede usar desde la celda de al lado |
+| `+` `-` `\|` | Wall |
+| space | Floor |
+| `p` | Player start position |
+| `g` | Exit (won't open until every totem is destroyed) |
+| `t` | Totem to destroy |
+| `e` | Where the enemy spawns (once the first totem breaks) |
+| `l` | Locker: counts as a wall (blocks movement) and is used from the cell next to it |
 
 ```
 +--+--+--+--+
@@ -95,87 +95,85 @@ eso pase: mientras se está adentro, el enemigo no puede ver ni tocar al jugador
 +--+--+--+--+
 ```
 
-Se puede editar o agregar un mapa nuevo: la ventana se dimensiona sola según el más grande de
-los tres archivos (`ancho_en_caracteres * BLOCK_SIZE`). Las filas no necesitan medir todas lo
-mismo — los espacios finales que borran los editores se tratan como piso.
+You can edit or add a new map: the window sizes itself to the largest of the three files
+(`width_in_characters * BLOCK_SIZE`). Rows don't need to be the same length — trailing spaces
+that editors strip are treated as floor.
 
-## Estructura
+## Structure
 
 ```
 src/
-  main.rs         Ventana, loop de menú/nivel, raycasting 3D, piso/techo, HUD
-  menu.rs         Menú principal, selector de nivel, pantalla de instrucciones
-  maze.rs         Tipo Maze: carga el archivo, colisiones, línea de visión
-  caster.rs       cast_ray: DDA, devuelve dónde y contra qué pegó cada rayo
-  player.rs       Player (posición, ángulo, fov, vida, stamina) y su input
-  enemy.rs        IA del enemigo: visión, estados (patrulla/investiga/persigue)
-  pathfind.rs     Ruta más corta entre dos celdas (BFS sobre la grilla)
-  totem.rs        Tótems destruibles y su zumbido de proximidad
-  locker.rs       Locker empotrado en pared; esconderse de vista/daño
-  sprites.rs      Billboards (enemigo, tótems, puerta) con oclusión por z-buffer
-  textures.rs     TextureManager + generación procedural de texturas/sprites
-  lighting.rs     Modelo de "linterna": caída por distancia + viñeteado
-  audio.rs        Efectos y música; volumen dinámico según distancia
-  framebuffer.rs  Buffer de pixeles propio, se sube a la ventana como textura
+  main.rs         Window, menu/level loop, 3D raycasting, floor/ceiling, HUD
+  menu.rs         Main menu, level selector, instructions screen
+  maze.rs         Maze type: loads the file, collisions, line of sight
+  caster.rs       cast_ray: DDA, returns where and what each ray hit
+  player.rs       Player (position, angle, fov, health, stamina) and its input
+  enemy.rs        Enemy AI: vision, states (patrol/investigate/chase)
+  pathfind.rs     Shortest path between two cells (BFS over the grid)
+  totem.rs        Destructible totems and their proximity hum
+  locker.rs       Wall-mounted locker; hiding from sight/damage
+  sprites.rs      Billboards (enemy, totems, door) with z-buffer occlusion
+  textures.rs     TextureManager + procedural texture/sprite generation
+  lighting.rs     The "flashlight" model: distance falloff + vignette
+  audio.rs        Sound effects and music; distance-based dynamic volume
+  framebuffer.rs  Custom pixel buffer, uploaded to the window as a texture
 ```
 
-## Cómo funciona
+## How it works
 
-**El rayo.** `cast_ray` usa DDA (Digital Differential Analysis): en vez de avanzar pixel por
-pixel, salta de línea de cuadrícula en línea de cuadrícula hasta topar con una celda de pared,
-lo que es más rápido y da la posición exacta del impacto (sin redondeo a 1px), necesaria para
-texturizar sin artefactos. Devuelve un `Intersect` con la distancia, el caracter contra el que
-pegó, `wall_x` (dónde a lo largo de esa cara, para elegir la columna de textura) y si fue una
-pared horizontal o vertical (para sombrearlas distinto y remarcar las esquinas).
+**The ray.** `cast_ray` uses DDA (Digital Differential Analysis): instead of stepping pixel by
+pixel, it jumps from grid line to grid line until it hits a wall cell, which is both faster and
+gives the exact impact position (no rounding to 1px), needed to texture without artifacts. It
+returns an `Intersect` with the distance, the character it hit, `wall_x` (where along that face,
+to pick the texture column) and whether it was a horizontal or vertical wall (so they're shaded
+differently, which is what makes corners readable).
 
-**El abanico.** Los rayos se reparten dentro del campo de visión (`fov = π/3`), empezando en
-`a - fov/2` y avanzando una fracción del fov por rayo. El mapa 2D dibuja 120, el minimapa 40 y
-la vista 3D lanza uno por cada columna de la pantalla.
+**The fan.** Rays are spread across the field of view (`fov = π/3`), starting at `a - fov/2`
+and stepping a fraction of the fov per ray. The 2D map draws 120, the minimap 40, and the 3D
+view casts one per screen column.
 
-**La proyección.** Cada distancia se vuelve una columna vertical de pared centrada en la mitad
-de la pantalla:
+**The projection.** Each distance becomes a vertical wall column centered on the middle of the
+screen:
 
 ```rust
 let d = intersect.distance * (a - player.a).cos();
 let stake_height = (BLOCK_SIZE as f32 / d) * distance_to_plane;
 ```
 
-El `cos(a - player.a)` corrige el ojo de pez (los rayos de las orillas del fov recorren más
-distancia que los del centro). `distance_to_plane = (ancho/2) / tan(fov/2)` en vez de una
-constante calibrada a mano, así que cambiar el fov no obliga a reajustar la escala.
+The `cos(a - player.a)` corrects the fisheye effect (rays at the edges of the fov travel more
+distance than the ones at the center). `distance_to_plane = (width/2) / tan(fov/2)` instead of a
+hand-tuned constant, so changing the fov doesn't require re-tuning the wall scale.
 
-**Piso y techo.** Se pintan fila por fila (no columna por columna): a diferencia de las
-paredes, toda una fila horizontal completa queda a la misma distancia real de la cámara sin
-importar la columna (floor-casting estándar), así que se puede oscurecer con la misma linterna
-sin repetir el cálculo por pixel.
+**Floor and ceiling.** Painted row by row (not column by column): unlike walls, an entire
+horizontal row sits at the same real distance from the camera regardless of column (standard
+floor-casting), so it can be darkened with the same flashlight model without repeating the
+calculation per pixel.
 
-**Los sprites.** Enemigo, tótems y puerta son billboards: siempre miran al jugador. Se dibujan
-del más lejano al más cercano usando el mismo z-buffer que llenan las paredes, para que un
-sprite detrás de una esquina quede recortado en vez de dibujarse encima de lo que debería
-taparlo.
+**The sprites.** Enemy, totems and door are billboards: they always face the player. They're
+drawn back-to-front using the same z-buffer the walls fill in, so a sprite partially behind a
+corner gets clipped correctly instead of drawing over what should be hiding it.
 
-**La linterna.** Todo se ilumina con caída cuadrática por distancia más un viñeteado que oscurece
-los bordes de la pantalla (el cono de una linterna real, no una luz pareja en todo el fov),
-mezclando el color hacia un tono de sombra casi negro en vez de negro plano.
+**The flashlight.** Everything is lit with quadratic distance falloff plus a vignette that
+darkens the edges of the screen (a real flashlight's cone, not an even light across the whole
+fov), blending the color toward an almost-black shadow tone instead of flat black.
 
-**La IA del enemigo.** Tres estados: `Idle` (patrulla), `Investigating` (va a la última celda
-donde se supo del jugador) y `Chasing` (lo tiene a la vista). Tanto perseguir como investigar
-calculan la ruta con un BFS sobre la grilla del laberinto (`pathfind.rs`) — con todas las celdas
-al mismo costo, un BFS visita en el mismo orden que un Dijkstra pero sin necesitar la cola de
-prioridad que ese algoritmo trae para pesos distintos — así el enemigo rodea las paredes en vez
-de trabarse en las esquinas. La patrulla libre también se mueve celda a celda entre vecinas ya
-confirmadas transitables, así que nunca choca contra un muro.
+**The enemy AI.** Three states: `Idle` (patrolling), `Investigating` (heading to the last cell
+where the player was known to be) and `Chasing` (has line of sight right now). Both chasing and
+investigating compute their route with a BFS over the maze grid (`pathfind.rs`) — since every
+cell costs the same, a BFS visits nodes in the same order a Dijkstra would, just without the
+priority queue that algorithm needs for uneven weights — so the enemy routes around walls
+instead of getting stuck on corners. Free patrol also moves cell to cell between already-confirmed
+walkable neighbors, so it can never walk into a wall.
 
-## Capturas
+## Screenshots
 
-Estas son de una build bastante más temprana del proyecto (antes de texturas, iluminación,
-tótems y enemigo), pero sirven para ver la técnica de raycasting en crudo: el mapa 2D con el
-abanico de rayos y la proyección 3D resultante. Para ver cómo se ve el juego actual, el
-[video](#video) de arriba.
+These are from a fairly early build of the project (before textures, lighting, totems and the
+enemy), but they're useful to see the raw raycasting technique: the 2D map with the ray fan and
+the resulting 3D projection. For what the game looks like now, see the [video](#video) above.
 
-![Vista 3D](capturas/vista3d.png)
+![3D view](capturas/vista3d.png)
 
-![Mapa 2D](capturas/mapa2d.png)
+![2D map](capturas/mapa2d.png)
 
 ## Tests
 
@@ -183,7 +181,8 @@ abanico de rayos y la proyección 3D resultante. Para ver cómo se ve el juego a
 cargo test
 ```
 
-No abre ventana. Cubre la trigonometría del raycaster (`cast_ray`, `wall_x`), colisiones y
-línea de visión del laberinto, la IA del enemigo (visión, patrulla sin chocar, perseguir e
-investigar con y sin obstáculos de por medio, perder el rastro), el pathfinding (`pathfind.rs`),
-tótems (proximidad, destrucción), lockers y el manejo de vida/energía del jugador.
+Doesn't open a window. Covers the raycaster's trigonometry (`cast_ray`, `wall_x`), the maze's
+collisions and line of sight, the enemy AI (vision, patrolling without collisions, chasing and
+investigating with and without obstacles in the way, losing the trail), pathfinding
+(`pathfind.rs`), totems (proximity, destruction), lockers, and the player's health/stamina
+handling.
