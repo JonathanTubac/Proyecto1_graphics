@@ -157,7 +157,7 @@ fn draw_footer(d: &mut RaylibDrawHandle, width: i32, height: i32, text: &str) {
 }
 
 fn draw_main(d: &mut RaylibDrawHandle, width: i32, height: i32, selected: usize) {
-    draw_title(d, width, "LABERINTO", 90, 64, Color::new(200, 40, 50, 255));
+    draw_title(d, width, "MAZETOT", 90, 64, Color::new(200, 40, 50, 255));
     draw_options(d, width, 280, &MAIN_OPTIONS, selected);
     draw_footer(d, width, height, "Flechas o W/S: moverse | ENTER: elegir | ESC: salir");
 }
