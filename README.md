@@ -14,12 +14,9 @@ y audio dinámico (pasos, ambiente y zumbidos que cambian de volumen según la d
 
 ## Video
 
-<video src="MazetotDemo.mp4" controls width="720">
-  Tu visor de Markdown no puede reproducir el video embebido — descárgalo o ábrelo directo:
-  <a href="MazetotDemo.mp4">MazetotDemo.mp4</a>.
-</video>
+[![Video de Mazetot](https://img.youtube.com/vi/a3fiC9cPOMk/hqdefault.jpg)](https://youtu.be/a3fiC9cPOMk)
 
-[▶ Ver/descargar `MazetotDemo.mp4`](MazetotDemo.mp4) (en la raíz del repo).
+[▶ Ver en YouTube](https://youtu.be/a3fiC9cPOMk)
 
 ## Cómo correrlo
 
