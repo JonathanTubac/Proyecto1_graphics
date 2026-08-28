@@ -6,6 +6,7 @@ mod lighting;
 mod locker;
 mod maze;
 mod menu;
+mod pathfind;
 mod player;
 mod sprites;
 mod textures;
@@ -750,11 +751,12 @@ fn run_level(
                             sfx.play_any_totem_destroyed();
                         }
 
-                        // Cada tótem que se rompe manda al enemigo directo
-                        // hacia el jugador, lo vea o no: esconderse en un
-                        // locker (arriba) es la única forma de que no lo
-                        // encuentre.
-                        enemy::alert_all(&mut enemies);
+                        // Cada tótem que se rompe manda al enemigo a
+                        // investigar dónde está el jugador ahora mismo,
+                        // aunque no lo vea. Si para cuando llega ya no hay
+                        // nadie (se escondió en un locker), pierde el
+                        // rastro solo, como cualquier otra pista en frío.
+                        enemy::alert_all(&mut enemies, player.pos, BLOCK_SIZE);
                     }
                 }
             }
@@ -831,15 +833,12 @@ fn run_level(
         let enemy_sprites: Vec<Sprite> =
             enemies.iter().map(|e| e.sprite_for_viewer(player.pos)).collect();
         let totem_sprites: Vec<Sprite> = totems.iter().filter_map(|t| t.sprite()).collect();
-        let locker_sprites: Vec<Sprite> = lockers.iter().map(|l| l.sprite()).collect();
         let mut world_sprites = enemy_sprites.clone();
         world_sprites.extend_from_slice(&door_sprites);
         world_sprites.extend_from_slice(&totem_sprites);
-        world_sprites.extend_from_slice(&locker_sprites);
 
-        // Escondido, no se renderiza la vista 3D normal: de tan cerca, el
-        // sprite del locker taparía toda la pantalla. En cambio se dibuja
-        // `draw_hiding_view` más abajo, directo con `d`.
+        // Escondido, no se renderiza la vista 3D normal. En cambio se
+        // dibuja `draw_hiding_view` más abajo, directo con `d`.
         if !player.hidden {
             render(
                 framebuffer,
@@ -913,3 +912,4 @@ fn run_level(
         }
     }
 }
+

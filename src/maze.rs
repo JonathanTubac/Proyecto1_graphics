@@ -35,8 +35,11 @@ impl Maze {
             .unwrap_or(' ')
     }
 
+    /// Los lockers ('l') cuentan como pared: son un mueble sólido empotrado
+    /// en el muro (ver `crate::locker`), no algo que se camine encima. El
+    /// jugador se para junto a la celda, no sobre ella.
     pub fn is_wall(&self, x: usize, y: usize) -> bool {
-        matches!(self.get(x, y), '+' | '-' | '|')
+        matches!(self.get(x, y), '+' | '-' | '|' | 'l')
     }
 
     /// Primera celda que contiene `target`, en coordenadas (x, y).

@@ -1,25 +1,20 @@
 use crate::maze::Maze;
 use crate::player::Player;
-use crate::sprites::Sprite;
 use raylib::prelude::*;
 
 /// Qué tan cerca hay que estar de un locker para poder entrar o salir de él.
 const INTERACT_RANGE: f32 = 40.0;
 
-/// Un mueble fijo en el que el jugador puede esconderse del enemigo. A
-/// diferencia de un `Totem`, no tiene estado propio (nunca se "destruye" ni
-/// se agota): quién está escondido y dónde es responsabilidad de
+/// Un mueble empotrado en la pared en el que el jugador puede esconderse del
+/// enemigo. Su celda cuenta como pared (`Maze::is_wall`), así que se dibuja
+/// y colisiona como cualquier otro muro (ver `crate::caster`, que ya
+/// texturiza con el caracter que haya en la celda) y no necesita su propio
+/// sprite billboard. A diferencia de un `Totem`, no tiene estado propio
+/// (nunca se "gasta"): quién está escondido y dónde es responsabilidad de
 /// `Player::hidden`, no de esta estructura. Ver cómo lo respetan
 /// `enemy::can_see_player` y `enemy::damage_player_if_close`.
 pub struct Locker {
     pos: Vector2,
-    size: f32,
-}
-
-impl Locker {
-    pub fn sprite(&self) -> Sprite {
-        Sprite::new(self.pos, 'l', self.size)
-    }
 }
 
 /// Busca en el laberinto las celdas marcadas con `marker` y planta un
@@ -33,7 +28,6 @@ pub fn spawn_from_maze(maze: &Maze, block_size: usize, marker: char) -> Vec<Lock
                 x as f32 * block_size as f32 + half,
                 y as f32 * block_size as f32 + half,
             ),
-            size: block_size as f32,
         })
         .collect()
 }
@@ -51,7 +45,7 @@ mod tests {
     use std::f32::consts::PI;
 
     fn make_locker(x: f32, y: f32) -> Locker {
-        Locker { pos: Vector2::new(x, y), size: 40.0 }
+        Locker { pos: Vector2::new(x, y) }
     }
 
     #[test]

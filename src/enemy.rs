@@ -1,9 +1,10 @@
 use crate::maze::Maze;
+use crate::pathfind::{self, Cell};
 use crate::player::Player;
 use crate::sprites::Sprite;
 use rand::Rng;
 use raylib::prelude::*;
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::PI;
 
 /// Qué tan lejos puede ver un enemigo antes de perder al jugador de vista.
 const SIGHT_RANGE: f32 = 220.0;
@@ -11,18 +12,15 @@ const SIGHT_RANGE: f32 = 220.0;
 /// ~103°: bastante amplio para que un guardia se sienta atento, sin ser
 /// omnisciente.
 const SIGHT_FOV: f32 = 1.8;
-/// Pixeles por frame que avanza un enemigo mientras persigue.
+/// Pixeles por frame que avanza un enemigo mientras persigue o investiga.
 const CHASE_SPEED: f32 = 1.8;
 /// Pixeles por frame que camina un enemigo mientras patrulla solo. Más
 /// lento que perseguir, para que se note la diferencia entre "va de ronda"
-/// y "ya me vio".
+/// y "ya me vio" (o "cree saber dónde está").
 const WANDER_SPEED: f32 = 0.9;
-/// Cada cuántos frames (a 60 fps, ~1.5s) un enemigo que patrulla cambia de
-/// dirección aunque no haya chocado con nada, para que no camine derecho
-/// por el mismo pasillo para siempre.
-const WANDER_CHANGE_INTERVAL: u32 = 90;
 /// No se acerca más que esto al jugador, para no superponer su sprite con
-/// la cámara.
+/// la cámara, ni a la celda que está investigando (ahí ya no hay nadie que
+/// alcanzar).
 const STOP_DISTANCE: f32 = 24.0;
 /// Qué tan cerca tiene que estar un enemigo para hacerle daño al jugador. Un
 /// poco más que `STOP_DISTANCE`, así que en la práctica pasa en cuanto un
@@ -30,17 +28,14 @@ const STOP_DISTANCE: f32 = 24.0;
 const DAMAGE_RANGE: f32 = 26.0;
 /// Radio de colisión del enemigo contra las paredes (mismo criterio que el jugador).
 const RADIUS: f32 = 8.0;
+/// Qué tan cerca de un punto de la ruta hay que estar para darlo por
+/// alcanzado y pasar al siguiente. Más chico que un paso normal, para que no
+/// se "corten" esquinas de forma notoria.
+const WAYPOINT_TOLERANCE: f32 = 4.0;
 /// Cada cuántos frames suena un paso del enemigo mientras se mueve, a
 /// velocidad base (a 60 fps, ~0.35s entre pasos). Se acorta según qué tan
 /// rápido esté yendo en este momento.
 const BASE_FOOTSTEP_INTERVAL: f32 = 21.0;
-/// Cuántos frames sigue un enemigo "alertado" yendo directo hacia el
-/// jugador sin necesitar verlo, después de que se rompe un tótem: como si
-/// hubiera oído el estruendo y supiera más o menos dónde buscar. A 60fps,
-/// ~10s. Si el jugador se esconde (`Player::hidden`), `can_see_player`
-/// sigue devolviendo falso y `damage_player_if_close` no le hace nada, así
-/// que la alerta por sí sola no basta para encontrarlo: sólo lo acerca.
-const ALERT_DURATION: u32 = 600;
 
 /// Caracteres de textura para cada combinación de vista (de frente / de
 /// espaldas) y pose (quieto, o cuadro A/B de la animación de correr).
@@ -51,29 +46,50 @@ const TEX_FRONT_RUN_B: char = '2';
 const TEX_BACK_RUN_A: char = '3';
 const TEX_BACK_RUN_B: char = '4';
 
-/// Si un enemigo ve al jugador ahora mismo o no. Se recalcula cada frame a
-/// partir de la visión: no hay memoria, en cuanto lo pierde de vista deja de
-/// perseguir y se queda quieto donde está.
+/// Qué está haciendo el enemigo ahora mismo:
+/// - `Idle`: patrulla solo, sin pista de dónde está el jugador.
+/// - `Investigating`: no lo ve, pero va derecho hacia la última celda donde
+///   se supo de él (lo vio ahí, o ahí fue el estruendo de un tótem
+///   rompiéndose); si llega y no hay nadie, pierde el rastro y vuelve a
+///   `Idle`.
+/// - `Chasing`: lo tiene a la vista ahora mismo.
 #[derive(Clone, Copy, PartialEq)]
 enum State {
     Idle,
+    Investigating,
     Chasing,
 }
 
-/// Un enemigo: dónde está, hacia dónde "mira" (su cono de visión) y si
-/// ahorita está persiguiendo al jugador. Produce un `Sprite` para que
-/// `crate::sprites` lo dibuje; no sabe nada de texturizado ni de billboards.
+/// Un enemigo: dónde está, hacia dónde "mira" (su cono de visión) y qué tan
+/// al tanto está del jugador. Produce un `Sprite` para que `crate::sprites`
+/// lo dibuje; no sabe nada de texturizado ni de billboards.
 pub struct Enemy {
     pub sprite: Sprite,
-    /// Dirección en la que "vigila", en radianes. Mientras persigue, se
-    /// actualiza para apuntar siempre al jugador; mientras patrulla, es la
-    /// misma dirección en la que está caminando.
+    /// Dirección en la que "vigila", en radianes. Persiguiendo, apunta al
+    /// jugador de verdad (para que el cono de visión lo siga teniendo
+    /// encima); investigando o patrullando, apunta hacia donde caminan los
+    /// pies (el siguiente punto de la ruta).
     facing: f32,
     state: State,
-    /// Dirección de la ronda actual (`Idle`), en radianes.
-    wander_dir: f32,
-    /// Frames que faltan para elegir una nueva dirección de ronda.
-    wander_timer: u32,
+    /// Celda de la que salió el último paso de patrulla, para no dar
+    /// media vuelta de inmediato y patrullar de forma más natural (salvo en
+    /// un callejón sin salida, donde no queda de otra).
+    last_wander_cell: Option<Cell>,
+    /// Última celda donde se supo del jugador (lo vio ahí, o fue la alerta
+    /// de un tótem roto), mientras `state == Investigating`. `None` en
+    /// cuanto llega y no encuentra a nadie: ahí es cuando "pierde el
+    /// rastro".
+    investigate_target: Option<Cell>,
+    /// Ruta pendiente hacia el objetivo actual (el jugador mientras
+    /// persigue, `investigate_target` mientras investiga, o la siguiente
+    /// celda de ronda mientras patrulla), en centros de celda ya
+    /// convertidos a pixeles. Se recalcula con `crate::pathfind` cuando la
+    /// celda objetivo cambia o se vacía.
+    path: Vec<Vector2>,
+    /// Celda objetivo con la que se calculó `path` la última vez, para
+    /// saber si hace falta recalcularla (el jugador se movió a otra celda)
+    /// en vez de rehacerla cada frame sin necesidad.
+    path_target: Option<Cell>,
     /// Frames que faltan para el siguiente sonido de paso.
     footstep_timer: u32,
     /// Si toca reproducir un sonido de paso justo este frame.
@@ -81,9 +97,6 @@ pub struct Enemy {
     /// Cuadro de la animación de correr (alterna en cada paso; ver
     /// `sprite_for_viewer`).
     anim_frame: bool,
-    /// Frames que le quedan de perseguir al jugador a ciegas (sin verlo)
-    /// tras una alerta (ver `alert_all`). 0 = no está alertado.
-    alert_timer: u32,
 }
 
 impl Enemy {
@@ -92,12 +105,13 @@ impl Enemy {
             sprite: Sprite::new(pos, texture, size),
             facing,
             state: State::Idle,
-            wander_dir: facing,
-            wander_timer: 0,
+            last_wander_cell: None,
+            investigate_target: None,
+            path: Vec::new(),
+            path_target: None,
             footstep_timer: 0,
             footstep_due: false,
             anim_frame: false,
-            alert_timer: 0,
         }
     }
 
@@ -105,8 +119,16 @@ impl Enemy {
         self.sprite.pos
     }
 
-    /// Si está persiguiendo al jugador ahora mismo (por si más adelante se
-    /// quiere, por ejemplo, cambiarle el color o la textura al perseguir).
+    /// Si está persiguiendo o investigando al jugador ahora mismo (por si
+    /// más adelante se quiere, por ejemplo, cambiarle el color o la
+    /// textura).
+    #[allow(dead_code)]
+    pub fn is_hunting(&self) -> bool {
+        self.state != State::Idle
+    }
+
+    /// Si lo tiene a la vista ahora mismo (a diferencia de ir hacia una
+    /// última posición conocida sin verlo).
     #[allow(dead_code)]
     pub fn is_chasing(&self) -> bool {
         self.state == State::Chasing
@@ -121,9 +143,9 @@ impl Enemy {
 
     /// Sprite a dibujar este frame. Elige entre vista de frente o de
     /// espaldas comparando hacia dónde "mira" el enemigo contra hacia dónde
-    /// queda `viewer` (el jugador) respecto a él; si está persiguiendo,
-    /// además alterna dos cuadros de carrera al ritmo de sus propios pasos
-    /// (el mismo `footstep_timer` que dispara el sonido).
+    /// queda `viewer` (el jugador) respecto a él; mientras persigue o
+    /// investiga, además alterna dos cuadros de carrera al ritmo de sus
+    /// propios pasos (el mismo `footstep_timer` que dispara el sonido).
     pub fn sprite_for_viewer(&self, viewer: Vector2) -> Sprite {
         let dx = viewer.x - self.pos().x;
         let dy = viewer.y - self.pos().y;
@@ -138,10 +160,10 @@ impl Enemy {
         let texture = match (self.state, front, self.anim_frame) {
             (State::Idle, true, _) => TEX_FRONT_IDLE,
             (State::Idle, false, _) => TEX_BACK_IDLE,
-            (State::Chasing, true, false) => TEX_FRONT_RUN_A,
-            (State::Chasing, true, true) => TEX_FRONT_RUN_B,
-            (State::Chasing, false, false) => TEX_BACK_RUN_A,
-            (State::Chasing, false, true) => TEX_BACK_RUN_B,
+            (State::Chasing, true, false) | (State::Investigating, true, false) => TEX_FRONT_RUN_A,
+            (State::Chasing, true, true) | (State::Investigating, true, true) => TEX_FRONT_RUN_B,
+            (State::Chasing, false, false) | (State::Investigating, false, false) => TEX_BACK_RUN_A,
+            (State::Chasing, false, true) | (State::Investigating, false, true) => TEX_BACK_RUN_B,
         };
 
         let mut sprite = self.sprite;
@@ -161,7 +183,6 @@ pub fn spawn_from_maze(
     initial_facing: f32,
 ) -> Vec<Enemy> {
     let half = block_size as f32 / 2.0;
-    let mut rng = rand::thread_rng();
     maze.find_all(marker)
         .into_iter()
         .map(|(x, y)| {
@@ -169,11 +190,7 @@ pub fn spawn_from_maze(
                 x as f32 * block_size as f32 + half,
                 y as f32 * block_size as f32 + half,
             );
-            let mut enemy = Enemy::new(pos, texture, block_size as f32, initial_facing);
-            // Arranca cada enemigo con un tiempo distinto para su primer
-            // cambio de dirección, para que no patrullen todos sincronizados.
-            enemy.wander_timer = rng.gen_range(0..WANDER_CHANGE_INTERVAL);
-            enemy
+            Enemy::new(pos, texture, block_size as f32, initial_facing)
         })
         .collect()
 }
@@ -233,7 +250,7 @@ pub fn damage_player_if_close(enemies: &[Enemy], player: &mut Player) {
 }
 
 /// Actualiza la visión, el estado y la posición de todos los enemigos para
-/// este frame: persiguen si ven al jugador, patrullan solos si no.
+/// este frame.
 ///
 /// `speed_multiplier` escala tanto la velocidad de persecución como la de
 /// ronda: en este laberinto se usa para que el único enemigo del nivel se
@@ -248,23 +265,23 @@ pub fn update_enemies(
 ) {
     let mut rng = rand::thread_rng();
     for enemy in enemies {
-        if enemy.alert_timer > 0 {
-            enemy.alert_timer -= 1;
-        }
-
-        // Persigue si lo ve, o si sigue alertado por un tótem roto aunque
-        // no lo vea todavía: ambos casos usan el mismo movimiento (ir
-        // directo hacia el jugador), la diferencia es sólo por qué.
         let seen = can_see_player(enemy, player, maze, block_size);
-        let hunting = enemy.alert_timer > 0;
-        enemy.state = if seen || hunting {
-            State::Chasing
-        } else {
-            State::Idle
-        };
+
+        if seen {
+            enemy.state = State::Chasing;
+        } else if enemy.state == State::Chasing {
+            // Lo tenía a la vista hasta este mismo frame: ahora va a
+            // investigar el último lugar donde lo vio, en vez de saber
+            // mágicamente hacia dónde se fue.
+            enemy.state = State::Investigating;
+            enemy.investigate_target = Some(pathfind::to_cell(player.pos, block_size));
+            enemy.path.clear();
+            enemy.path_target = None;
+        }
 
         let moved = match enemy.state {
             State::Chasing => chase_player(enemy, player, maze, block_size, speed_multiplier),
+            State::Investigating => investigate(enemy, maze, block_size, speed_multiplier),
             State::Idle => wander(enemy, maze, block_size, speed_multiplier, &mut rng),
         };
 
@@ -272,14 +289,23 @@ pub fn update_enemies(
     }
 }
 
-/// Pone a todos los enemigos en alerta: durante `ALERT_DURATION` frames van
-/// directo hacia donde está el jugador aunque no lo vean, como si hubieran
-/// oído el tótem romperse. Se llama cada vez que se destruye alguno, así
-/// que romper varios seguidos mantiene la persecución viva en vez de
-/// dejarla expirar a medio camino.
-pub fn alert_all(enemies: &mut [Enemy]) {
+/// Manda a todos los enemigos a investigar la posición actual del jugador,
+/// como si hubieran oído el estruendo de un tótem rompiéndose: no lo ven
+/// (si lo vieran, ya estarían persiguiendo de verdad), pero van derecho
+/// hacia ahí. Se llama cada vez que se destruye un tótem, así que romper
+/// varios seguidos refresca el objetivo en vez de dejar que el enemigo siga
+/// una pista ya vieja.
+pub fn alert_all(enemies: &mut [Enemy], player_pos: Vector2, block_size: usize) {
+    let target = pathfind::to_cell(player_pos, block_size);
     for enemy in enemies {
-        enemy.alert_timer = ALERT_DURATION;
+        if enemy.state == State::Chasing {
+            // Ya lo tiene a la vista: nada que avisarle.
+            continue;
+        }
+        enemy.state = State::Investigating;
+        enemy.investigate_target = Some(target);
+        enemy.path.clear();
+        enemy.path_target = None;
     }
 }
 
@@ -304,9 +330,34 @@ fn update_footstep_timer(enemy: &mut Enemy, moved: bool, speed_multiplier: f32) 
     }
 }
 
-/// Camina en línea recta hacia el jugador, deslizándose sobre las paredes
-/// igual que el jugador, y se para a `STOP_DISTANCE` para no superponerse
-/// con la cámara. Regresa si avanzó de verdad este frame.
+/// Si la ruta hacia `target_cell` ya no sirve (está vacía, o se calculó para
+/// otra celda objetivo), la recalcula con `crate::pathfind` y la deja lista
+/// en `enemy.path`. `Vec::new()` (ruta vacía porque no hay camino, o porque
+/// ya se está en `target_cell`) es una respuesta válida: quien llama decide
+/// qué hacer si no hay a dónde ir.
+fn ensure_path_towards(enemy: &mut Enemy, maze: &Maze, block_size: usize, target_cell: Cell) {
+    if !enemy.path.is_empty() && enemy.path_target == Some(target_cell) {
+        return;
+    }
+
+    let start_cell = pathfind::to_cell(enemy.pos(), block_size);
+    enemy.path = pathfind::find_path(maze, start_cell, target_cell)
+        .map(|cells| {
+            cells
+                .into_iter()
+                .map(|c| pathfind::cell_center(c, block_size))
+                .collect()
+        })
+        .unwrap_or_default();
+    enemy.path_target = Some(target_cell);
+}
+
+/// Avanza hacia el jugador siguiendo la ruta que calcula `crate::pathfind`
+/// (así no se traba en las esquinas del laberinto), pero sin dejar de
+/// mirarlo de frente: los ojos se quedan fijos en su posición real, aunque
+/// los pies vayan por el camino que rodea las paredes. Se para a
+/// `STOP_DISTANCE` para no superponerse con la cámara. Regresa si avanzó de
+/// verdad este frame.
 fn chase_player(
     enemy: &mut Enemy,
     player: &Player,
@@ -314,32 +365,104 @@ fn chase_player(
     block_size: usize,
     speed_multiplier: f32,
 ) -> bool {
-    let dx = player.pos.x - enemy.pos().x;
-    let dy = player.pos.y - enemy.pos().y;
-    let distance = (dx * dx + dy * dy).sqrt();
-
-    // Sigue mirando hacia el jugador aunque ya no avance más: es lo que
-    // hace que el cono de visión "lo siga teniendo encima" mientras esté
-    // cerca, en vez de perderlo de vista por quedarse mirando fijo.
-    enemy.facing = dy.atan2(dx);
-    // Si lo pierde de vista y vuelve a patrullar, que siga hacia donde
-    // estaba yendo en vez de saltar a una dirección al azar de golpe.
-    enemy.wander_dir = enemy.facing;
+    let to_player = player.pos - enemy.pos();
+    let distance = to_player.length();
+    let look_at_player = to_player.y.atan2(to_player.x);
 
     if distance < STOP_DISTANCE {
-        return false; // ya está lo bastante cerca, no hace falta seguir avanzando
+        enemy.facing = look_at_player;
+        enemy.path.clear();
+        enemy.path_target = None;
+        return false;
+    }
+
+    let target_cell = pathfind::to_cell(player.pos, block_size);
+    ensure_path_towards(enemy, maze, block_size, target_cell);
+
+    let speed = CHASE_SPEED * speed_multiplier;
+    let moved = if enemy.path.is_empty() {
+        // Sin ruta (misma celda que el jugador, o el pathfinding no
+        // encontró camino, lo que no debería pasar en un laberinto
+        // conexo): igual avanza en línea recta para no quedarse pegado.
+        let (step_x, step_y) = (to_player.x / distance * speed, to_player.y / distance * speed);
+        move_with_wall_slide(enemy, maze, block_size, step_x, step_y)
+    } else {
+        follow_path(enemy, maze, block_size, speed)
+    };
+
+    // Los ojos se quedan fijos en el jugador (para que el cono de visión lo
+    // siga teniendo encima) aunque `follow_path` haya reorientado los pies
+    // hacia el siguiente punto de la ruta.
+    enemy.facing = look_at_player;
+    moved
+}
+
+/// Avanza hacia `investigate_target` (la última celda donde se supo del
+/// jugador) siguiendo una ruta calculada, igual que `chase_player` pero sin
+/// nadie a quien mirar de frente: la cara sigue hacia donde van los pies. Si
+/// llega y no hay nadie, pierde el rastro y vuelve a patrullar solo.
+/// Regresa si avanzó de verdad este frame.
+fn investigate(enemy: &mut Enemy, maze: &Maze, block_size: usize, speed_multiplier: f32) -> bool {
+    let Some(target_cell) = enemy.investigate_target else {
+        enemy.state = State::Idle;
+        return false;
+    };
+
+    let target_pos = pathfind::cell_center(target_cell, block_size);
+    let distance = (target_pos - enemy.pos()).length();
+    if distance < STOP_DISTANCE {
+        // Llegó adonde se suponía que estaba, y no hay nadie: se le enfrió
+        // la pista.
+        enemy.investigate_target = None;
+        enemy.path.clear();
+        enemy.path_target = None;
+        enemy.state = State::Idle;
+        return false;
+    }
+
+    ensure_path_towards(enemy, maze, block_size, target_cell);
+    if enemy.path.is_empty() {
+        // Sin ruta a la última posición conocida (no debería pasar en un
+        // laberinto conexo, pero si pasa no tiene caso quedarse esperando):
+        // se rinde ya mismo en vez de congelarse ahí parado.
+        enemy.investigate_target = None;
+        enemy.state = State::Idle;
+        return false;
     }
 
     let speed = CHASE_SPEED * speed_multiplier;
-    let (step_x, step_y) = (dx / distance * speed, dy / distance * speed);
-    move_with_wall_slide(enemy, maze, block_size, step_x, step_y)
+    follow_path(enemy, maze, block_size, speed)
 }
 
-/// Camina solo en una dirección hasta chocar con una pared o hasta que se
-/// cumpla el tiempo de ronda, momento en el que elige una dirección nueva al
-/// azar. Es un recorrido simple ("rebota" en las paredes), no un patrullaje
-/// por puntos fijos, pero alcanza para que el laberinto se sienta habitado.
+/// Va de un punto al siguiente de `enemy.path`, consumiéndolos a medida que
+/// los alcanza (varios en el mismo frame si el paso es más largo que la
+/// distancia que falta), y orienta `facing` hacia el punto al que va.
 /// Regresa si avanzó de verdad este frame.
+fn follow_path(enemy: &mut Enemy, maze: &Maze, block_size: usize, speed: f32) -> bool {
+    loop {
+        let Some(next) = enemy.path.first().copied() else {
+            return false;
+        };
+
+        let to_next = next - enemy.pos();
+        let distance = to_next.length();
+        if distance < WAYPOINT_TOLERANCE {
+            enemy.path.remove(0);
+            continue; // Ya está ahí: sigue con el siguiente punto del mismo frame.
+        }
+
+        enemy.facing = to_next.y.atan2(to_next.x);
+        let (step_x, step_y) = (to_next.x / distance * speed, to_next.y / distance * speed);
+        return move_with_wall_slide(enemy, maze, block_size, step_x, step_y);
+    }
+}
+
+/// Patrulla solo: cada vez que llega a la celda que tenía como destino,
+/// elige otra al azar entre las celdas libres vecinas (evitando, si hay más
+/// de una opción, dar media vuelta hacia de dónde venía) y camina derecho
+/// hacia su centro. Como sólo elige entre vecinas ya confirmadas libres, no
+/// hay forma de que choque contra una pared. Regresa si avanzó de verdad
+/// este frame.
 fn wander(
     enemy: &mut Enemy,
     maze: &Maze,
@@ -347,26 +470,29 @@ fn wander(
     speed_multiplier: f32,
     rng: &mut impl Rng,
 ) -> bool {
-    if enemy.wander_timer == 0 {
-        enemy.wander_dir = rng.gen_range(0.0..TAU);
-        enemy.wander_timer = WANDER_CHANGE_INTERVAL;
-    } else {
-        enemy.wander_timer -= 1;
+    if enemy.path.is_empty() {
+        let current_cell = pathfind::to_cell(enemy.pos(), block_size);
+        let mut candidates = pathfind::free_neighbors(maze, current_cell);
+
+        if candidates.len() > 1 {
+            if let Some(prev) = enemy.last_wander_cell {
+                candidates.retain(|&c| c != prev);
+            }
+        }
+
+        let Some(&choice) = candidates.get(rng.gen_range(0..candidates.len().max(1))) else {
+            return false; // Celda aislada: no debería pasar en un laberinto conexo.
+        };
+
+        enemy.last_wander_cell = Some(current_cell);
+        enemy.path = vec![pathfind::cell_center(choice, block_size)];
     }
-    enemy.facing = enemy.wander_dir;
 
     let speed = WANDER_SPEED * speed_multiplier;
-    let step_x = enemy.wander_dir.cos() * speed;
-    let step_y = enemy.wander_dir.sin() * speed;
-    let moved = move_with_wall_slide(enemy, maze, block_size, step_x, step_y);
-
-    // Chocó de lleno (no avanzó en ningún eje): no tiene caso esperar al
-    // timer, mejor elegir otra dirección ya para no quedarse vibrando
-    // contra la pared.
+    let moved = follow_path(enemy, maze, block_size, speed);
     if !moved {
-        enemy.wander_timer = 0;
+        enemy.path.clear(); // Fuerza elegir otra celda el siguiente frame.
     }
-
     moved
 }
 
@@ -412,6 +538,16 @@ mod tests {
         Maze::new(cells)
     }
 
+    /// Dos cuartos (celdas 1-3 y 5-9) separados por una pared en x=4, sin
+    /// hueco: nunca hay línea de vista de un lado al otro.
+    fn two_sealed_rooms() -> Maze {
+        let cells: Vec<Vec<char>> = ["+++++++++++", "+   +     +", "+   +     +", "+++++++++++"]
+            .iter()
+            .map(|r| r.chars().collect())
+            .collect();
+        Maze::new(cells)
+    }
+
     #[test]
     fn sees_player_directly_ahead_within_range() {
         let maze = open_room(10, 5);
@@ -442,12 +578,7 @@ mod tests {
 
     #[test]
     fn does_not_see_player_through_a_wall() {
-        // Dos cuartos (celdas 1-3 y 5-9) separados por una pared en x=4.
-        let cells: Vec<Vec<char>> = ["+++++++++++", "+   +     +", "+   +     +", "+++++++++++"]
-            .iter()
-            .map(|r| r.chars().collect())
-            .collect();
-        let maze = Maze::new(cells);
+        let maze = two_sealed_rooms();
         let block = 20;
         let enemy = Enemy::new(Vector2::new(40.0, 30.0), 'e', block as f32, 0.0);
         let player = Player::new(Vector2::new(140.0, 30.0), 0.0, PI / 3.0);
@@ -475,7 +606,7 @@ mod tests {
     }
 
     #[test]
-    fn wandering_enemy_stays_inside_the_walls() {
+    fn wandering_enemy_never_enters_a_wall_cell() {
         let maze = open_room(15, 15);
         let block = 20;
         let mut enemy = Enemy::new(Vector2::new(150.0, 150.0), 'e', block as f32, 0.0);
@@ -492,19 +623,22 @@ mod tests {
     }
 
     #[test]
-    fn hitting_a_wall_forces_a_new_direction_next_tick() {
-        let maze = open_room(15, 15);
+    fn wandering_enemy_avoids_immediately_reversing_when_it_has_a_choice() {
+        // Pasillo recto de tres celdas de ancho: parado en medio, sólo la
+        // celda "de la que viene" debería quedar descartada.
+        let maze = open_room(3, 15);
         let block = 20;
-        // Pegado a la pared izquierda (x=20 es el borde de la celda 1),
-        // mirando derecho hacia ella: el primer paso debería chocar.
-        let mut enemy = Enemy::new(Vector2::new(21.0, 150.0), 'e', block as f32, PI);
-        enemy.wander_dir = PI; // hacia el oeste, directo a la pared
-        enemy.wander_timer = WANDER_CHANGE_INTERVAL; // que no se deba a que ya le tocaba cambiar
+        let mut enemy = Enemy::new(Vector2::new(30.0, 150.0), 'e', block as f32, 0.0);
+        enemy.last_wander_cell = Some((1, 6)); // como si acabara de bajar desde arriba
 
-        let mut rng = StdRng::seed_from_u64(7);
+        let mut rng = StdRng::seed_from_u64(1);
         wander(&mut enemy, &maze, block, 1.0, &mut rng);
 
-        assert_eq!(enemy.wander_timer, 0, "debería forzar un cambio de dirección al chocar");
+        assert_ne!(
+            pathfind::to_cell(enemy.pos(), block),
+            (1, 6),
+            "no debería haber vuelto de inmediato a la celda de la que venía"
+        );
     }
 
     #[test]
@@ -550,7 +684,7 @@ mod tests {
     }
 
     #[test]
-    fn alert_makes_enemy_chase_without_seeing_the_player() {
+    fn alert_makes_enemy_investigate_without_seeing_the_player() {
         let maze = open_room(15, 15);
         let block = 20;
         // Mirando al este; el jugador queda detrás (al oeste), fuera del
@@ -559,39 +693,91 @@ mod tests {
         let player = Player::new(Vector2::new(40.0, 150.0), 0.0, PI / 3.0);
         assert!(!can_see_player(&enemies[0], &player, &maze, block));
 
-        alert_all(&mut enemies);
+        alert_all(&mut enemies, player.pos, block);
         update_enemies(&mut enemies, &player, &maze, block, 1.0);
 
         assert!(
-            enemies[0].is_chasing(),
-            "un enemigo alertado debería perseguir aunque no vea al jugador"
+            enemies[0].is_hunting(),
+            "un enemigo alertado debería ir a investigar aunque no vea al jugador"
+        );
+        assert!(!enemies[0].is_chasing(), "investigar no es lo mismo que tenerlo a la vista");
+    }
+
+    #[test]
+    fn investigating_enemy_paths_around_a_wall_towards_the_alert() {
+        // Dos cuartos conectados por un hueco en la fila del medio: la
+        // única forma de llegar del uno al otro en línea recta chocaría con
+        // la pared de en medio, así que hace falta rodear.
+        let cells: Vec<Vec<char>> = [
+            "+++++++++++",
+            "+   +     +",
+            "+        +",
+            "+   +     +",
+            "+++++++++++",
+        ]
+        .iter()
+        .map(|r| r.chars().collect())
+        .collect();
+        let maze = Maze::new(cells);
+        let block = 20;
+        let mut enemies = vec![Enemy::new(Vector2::new(30.0, 30.0), 'e', block as f32, 0.0)];
+        let player_pos = Vector2::new(170.0, 30.0);
+
+        alert_all(&mut enemies, player_pos, block);
+        let fake_player = Player::new(Vector2::new(-1000.0, -1000.0), 0.0, PI / 3.0); // lejos: nunca lo ve
+        let mut closest = f32::INFINITY;
+        for _ in 0..200 {
+            update_enemies(&mut enemies, &fake_player, &maze, block, 1.0);
+            assert!(
+                maze.is_free(enemies[0].pos().x, enemies[0].pos().y, block, 0.0),
+                "no debería terminar dentro de una pared siguiendo la ruta"
+            );
+            closest = closest.min((enemies[0].pos() - player_pos).length());
+            if !enemies[0].is_hunting() {
+                break; // Llegó, perdió el rastro y ya volvió a patrullar: no hace falta seguir.
+            }
+        }
+
+        assert!(
+            closest < 40.0,
+            "debería haber llegado cerca de la última posición conocida en algún momento; más cerca que estuvo: {closest}"
         );
     }
 
     #[test]
-    fn alert_wears_off_and_enemy_goes_back_to_wandering() {
-        // Dos cuartos separados por una pared: el jugador nunca queda a la
-        // vista sin importar hacia dónde termine mirando el enemigo
-        // mientras persigue a ciegas.
-        let cells: Vec<Vec<char>> = ["+++++++++++", "+   +     +", "+   +     +", "+++++++++++"]
-            .iter()
-            .map(|r| r.chars().collect())
-            .collect();
-        let maze = Maze::new(cells);
+    fn losing_the_trail_goes_back_to_idle_and_forgets_the_target() {
+        let maze = two_sealed_rooms();
         let block = 20;
         let mut enemies = vec![Enemy::new(Vector2::new(40.0, 30.0), 'e', block as f32, 0.0)];
-        let player = Player::new(Vector2::new(140.0, 30.0), 0.0, PI / 3.0);
+        let far_player = Player::new(Vector2::new(-1000.0, -1000.0), 0.0, PI / 3.0); // nunca lo ve
 
-        alert_all(&mut enemies);
-        for _ in 0..=ALERT_DURATION {
-            assert!(!can_see_player(&enemies[0], &player, &maze, block));
-            update_enemies(&mut enemies, &player, &maze, block, 1.0);
-        }
+        // El objetivo de la alerta es su propia celda: ya llegó, así que
+        // debería perder el rastro en la primera actualización.
+        let own_pos = enemies[0].pos();
+        alert_all(&mut enemies, own_pos, block);
+        update_enemies(&mut enemies, &far_player, &maze, block, 1.0);
 
         assert!(
-            !enemies[0].is_chasing(),
-            "la alerta debería haberse acabado ya"
+            !enemies[0].is_hunting(),
+            "al llegar sin encontrar al jugador debería volver a patrullar"
         );
+    }
+
+    #[test]
+    fn seeing_the_player_while_investigating_switches_to_chasing() {
+        let maze = open_room(15, 15);
+        let block = 20;
+        let mut enemies = vec![Enemy::new(Vector2::new(150.0, 150.0), 'e', block as f32, 0.0)];
+        let player = Player::new(Vector2::new(40.0, 150.0), 0.0, PI / 3.0);
+
+        alert_all(&mut enemies, player.pos, block);
+        update_enemies(&mut enemies, &player, &maze, block, 1.0); // investigando, aún no lo ve
+
+        // Lo reorienta para que quede justo dentro del cono de visión.
+        enemies[0].facing = (player.pos - enemies[0].pos()).y.atan2((player.pos - enemies[0].pos()).x);
+        update_enemies(&mut enemies, &player, &maze, block, 1.0);
+
+        assert!(enemies[0].is_chasing(), "al verlo debería pasar a perseguir de verdad");
     }
 
     #[test]
