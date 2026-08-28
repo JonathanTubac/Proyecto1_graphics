@@ -621,6 +621,19 @@ fn run_menu(
     sfx.stop_gameplay_ambient();
     sfx.start_menu_theme();
 
+    // Dibuja (y con eso, sondea el teclado una vez) antes de leer ningún
+    // input: si se volvió aquí porque el nivel anterior se cerró con ESC
+    // (p.ej. desde la pantalla de "ganaste"/"perdiste"), esa tecla sigue
+    // marcada como "recién presionada" hasta el próximo sondeo — no hay uno
+    // nuevo entre que `run_level` la lee y que este bucle arranca. Sin este
+    // frame de más, `nav.update` la volvería a leer como un ESC apretado
+    // *aquí*, y en la pantalla principal eso es "Salir": cerraría todo el
+    // juego de una en vez de mostrar el menú.
+    {
+        let mut d = window.begin_drawing(thread);
+        menu::draw(&mut d, width, height, &nav, level_names);
+    }
+
     let result = loop {
         if window.window_should_close() {
             break None;
